@@ -20,28 +20,26 @@
  */
 
 import { EventEmitter } from "node:events";
-import type {
-    MaxStreamsFrame,
-    QuicFrame,
-    QuicStream,
-    QuicTransportParameters,
-    StreamId,
-    StreamState,
-    StreamCloseReason,
-} from "../types.js";
-import { QuicFrameType } from "../types.js";
 import {
+    QuicFrameType,
     firstStreamId,
     makeStreamId,
     nextStreamId,
     streamIdIsBidirectional,
     streamIdIsClientInitiated,
+    type MaxStreamsFrame,
+    type QuicFrame,
+    type QuicStream,
+    type QuicTransportParameters,
+    type StreamId,
+    type StreamState,
+    type StreamCloseReason,
 } from "../types.js";
 import { ResetStreamError, StopSendingError } from "../errors.js";
 import { concat } from "../utils.js";
 
 /** Byte type alias matching the `Uint8Array<ArrayBufferLike>` wire signatures. */
-type Bytes = Uint8Array<ArrayBufferLike>;
+type Bytes = Uint8Array;
 
 /** Empty byte array constant. */
 const EMPTY: Bytes = new Uint8Array(0);
@@ -123,12 +121,17 @@ class ManagedStream implements QuicStream {
 
     // --- public QuicStream surface ---------------------------------------------
 
-    public async write(data: Uint8Array): Promise<void> {
+    public write(data: Uint8Array): Promise<void> {
         if (this.state.state === "closed" || this.state.state === "half_closed_local") {
-            throw new ResetStreamError(this.id, 0x05n /* STREAM_STATE_ERROR */, this.dataSent);
+            return Promise.reject(
+                new ResetStreamError(this.id, 0x05n /* STREAM_STATE_ERROR */, this.dataSent),
+            );
         }
-        if (data.length === 0) return;
+        if (data.length === 0) {
+            return Promise.resolve();
+        }
         this.sendQueue = concat(this.sendQueue, data as Bytes);
+        return Promise.resolve();
     }
 
     public read(): Promise<Bytes> {
@@ -149,7 +152,9 @@ class ManagedStream implements QuicStream {
     }
 
     public close(): Promise<void> {
-        if (this.state.state === "closed") return Promise.resolve();
+        if (this.state.state === "closed") {
+            return Promise.resolve();
+        }
         this.sendFinPending = true;
         return Promise.resolve();
     }
@@ -162,7 +167,9 @@ class ManagedStream implements QuicStream {
      * the queue; call `commitSend()` once the frame is actually sent.
      */
     public peekSend(maxBytes: number): Bytes {
-        if (this.sendQueue.length === 0) return EMPTY;
+        if (this.sendQueue.length === 0) {
+            return EMPTY;
+        }
         const len = Math.min(maxBytes, this.sendQueue.length);
         return this.sendQueue.subarray(0, len) as Bytes;
     }
@@ -208,7 +215,9 @@ class ManagedStream implements QuicStream {
 
         // Drop bytes we have already delivered (retransmissions / overlaps).
         if (end <= this.recvOffset) {
-            if (offset < this.recvOffset) return this.replenishNeeded();
+            if (offset < this.recvOffset) {
+                return this.replenishNeeded();
+            }
             return this.replenishNeeded();
         }
         // Clip the front if part of this frame is below recvOffset.
@@ -262,8 +271,10 @@ class ManagedStream implements QuicStream {
     /** Deliver any buffered reassembly chunks that now bridge recvOffset. */
     private drainReassembly(): void {
         while (this.reassembly.length > 0) {
-            const head = this.reassembly[0]!;
-            if (head.offset > this.recvOffset) break;
+            const head = this.reassembly[0];
+            if (head === undefined || head.offset > this.recvOffset) {
+                break;
+            }
             this.reassembly.shift();
             // head.offset <= recvOffset (it was inserted above recvOffset, so equal).
             this.recvOffset += BigInt(head.data.length);
@@ -273,19 +284,21 @@ class ManagedStream implements QuicStream {
 
     /** Hand bytes to a waiting reader or buffer them. */
     private deliver(bytes: Bytes): void {
-        if (this.readWaiters.length > 0) {
-            const waiter = this.readWaiters.shift()!;
-            waiter.resolve(bytes);
-        } else {
+        const waiter = this.readWaiters.shift();
+        if (waiter === undefined) {
             this.readBuffer = concat(this.readBuffer, bytes);
+            return;
         }
+        waiter.resolve(bytes);
     }
 
     private signalFin(): void {
-        if (this.finDelivered) return;
+        if (this.finDelivered) {
+            return;
+        }
         this.finDelivered = true;
-        if (this.readWaiters.length > 0) {
-            const waiter = this.readWaiters.shift()!;
+        const waiter = this.readWaiters.shift();
+        if (waiter !== undefined) {
             waiter.resolve(EMPTY);
         }
         this.transitionOnRemoteFin();
@@ -310,7 +323,9 @@ class ManagedStream implements QuicStream {
 
     /** Grow the peer's per-stream send limit (MAX_STREAM_DATA arrived). */
     public growSendWindow(maximum: bigint): void {
-        if (maximum <= this.maxStreamData) return;
+        if (maximum <= this.maxStreamData) {
+            return;
+        }
         this.maxStreamData = maximum;
         this.drainSendWaiters();
     }
@@ -319,16 +334,31 @@ class ManagedStream implements QuicStream {
 
     private drainSendWaiters(): void {
         if (this.sendQueue.length === 0) {
-            while (this.sendWaiters.length > 0) this.sendWaiters.shift()!.resolve();
+            while (this.sendWaiters.length > 0) {
+                const waiter = this.sendWaiters.shift();
+                if (waiter !== undefined) {
+                    waiter.resolve();
+                }
+            }
         }
     }
 
     private rejectReaders(err: Error): void {
-        while (this.readWaiters.length > 0) this.readWaiters.shift()!.reject(err);
+        while (this.readWaiters.length > 0) {
+            const waiter = this.readWaiters.shift();
+            if (waiter !== undefined) {
+                waiter.reject(err);
+            }
+        }
     }
 
     private rejectWriters(err: Error): void {
-        while (this.sendWaiters.length > 0) this.sendWaiters.shift()!.reject(err);
+        while (this.sendWaiters.length > 0) {
+            const waiter = this.sendWaiters.shift();
+            if (waiter !== undefined) {
+                waiter.reject(err);
+            }
+        }
     }
 
     // --- state machine ----------------------------------------------------------
@@ -473,7 +503,9 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
     // --- stream lifecycle ------------------------------------------------------
 
     function openStream(bidirectional: boolean): QuicStream {
-        if (closing || closed) throw new Error("connection is closing");
+        if (closing || closed) {
+            throw new Error("connection is closing");
+        }
         const id = bidirectional ? nextBidi : nextUni;
         if (bidirectional) {
             nextBidi = nextStreamId(nextBidi);
@@ -486,19 +518,16 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
     }
 
     function acceptStream(bidirectional: boolean): Promise<QuicStream> {
-        if (closing || closed) return Promise.reject(new Error("connection is closing"));
+        if (closing || closed) {
+            return Promise.reject(new Error("connection is closing"));
+        }
         // Already have an incoming stream of this type waiting?
         for (const stream of streams.values()) {
             const matchesType = streamIdIsBidirectional(stream.id) === bidirectional;
             const peerInitiated = !streamIdIsClientInitiated(stream.id);
-            if (matchesType && peerInitiated) {
-                // Only surface it once: mark as accepted by flipping to a synthetic
-                // client-initiated id is wrong — instead, track acceptance. We use a
-                // simple "accepted" flag on a wrapper; here we just return it once.
-                if (!acceptedStreams.has(stream.id)) {
-                    acceptedStreams.add(stream.id);
-                    return Promise.resolve(stream);
-                }
+            if (matchesType && peerInitiated && !acceptedStreams.has(stream.id)) {
+                acceptedStreams.add(stream.id);
+                return Promise.resolve(stream);
             }
         }
         return new Promise<QuicStream>((resolve, reject) => {
@@ -520,9 +549,11 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
         // Wake a matching accept waiter if one is waiting.
         const waiterIdx = acceptWaiters.findIndex((w) => w.bidirectional === bidirectional);
         if (waiterIdx >= 0) {
-            const waiter = acceptWaiters.splice(waiterIdx, 1)[0]!;
-            acceptedStreams.add(id);
-            waiter.resolve(stream);
+            const [waiter] = acceptWaiters.splice(waiterIdx, 1);
+            if (waiter !== undefined) {
+                acceptedStreams.add(id);
+                waiter.resolve(stream);
+            }
         } else {
             emitter.emit("incomingStream", stream);
         }
@@ -534,8 +565,12 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
     function flushSends(maxPayload: number, emit: (frame: QuicFrame) => void): void {
         let budget = maxPayload;
         for (const stream of streams.values()) {
-            if (budget <= 0) break;
-            if (!stream.hasPendingSend) continue;
+            if (budget <= 0) {
+                break;
+            }
+            if (!stream.hasPendingSend) {
+                continue;
+            }
             // Respect both the connection and per-stream send windows.
             const streamWindow = stream.maxStreamData - stream.dataSent;
             const connWindow = connectionMaxData - connectionDataSent;
@@ -551,7 +586,9 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
                 continue;
             }
             let payload = stream.peekSend(allow);
-            if (payload.length > allow) payload = payload.subarray(0, allow) as Bytes;
+            if (payload.length > allow) {
+                payload = payload.subarray(0, allow) as Bytes;
+            }
             const isLastOfStream =
                 stream.sendFinPending && stream.sendQueue.length <= payload.length;
             if (isLastOfStream) {
@@ -583,36 +620,47 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
     function dispatch(frame: QuicFrame): void {
         switch (frame.type) {
             case QuicFrameType.STREAM:
-                return handleStream(frame);
+                handleStream(frame);
+                break;
             case QuicFrameType.RESET_STREAM:
-                return handleResetStream(frame);
+                handleResetStream(frame);
+                break;
             case QuicFrameType.STOP_SENDING:
-                return handleStopSending(frame);
+                handleStopSending(frame);
+                break;
             case QuicFrameType.MAX_DATA:
-                return handleMaxData(frame);
+                handleMaxData(frame);
+                break;
             case QuicFrameType.MAX_STREAM_DATA:
-                return handleMaxStreamData(frame);
+                handleMaxStreamData(frame);
+                break;
             case QuicFrameType.MAX_STREAMS_BIDI:
             case QuicFrameType.MAX_STREAMS_UNI:
-                return handleMaxStreams(frame);
+                handleMaxStreams(frame);
+                break;
+            case QuicFrameType.CONNECTION_CLOSE:
+            case QuicFrameType.CONNECTION_CLOSE_APP:
+                handleConnectionClose(frame);
+                break;
             case QuicFrameType.DATA_BLOCKED:
             case QuicFrameType.STREAM_DATA_BLOCKED:
             case QuicFrameType.STREAMS_BLOCKED_BIDI:
             case QuicFrameType.STREAMS_BLOCKED_UNI:
-                // Peer is blocked on a window we control — informational; a full
-                // implementation would pace. We surface nothing here.
-                return;
-            case QuicFrameType.CONNECTION_CLOSE:
-            case QuicFrameType.CONNECTION_CLOSE_APP:
-                return handleConnectionClose(frame);
             case QuicFrameType.PING:
-                // Liveness probe: the connection layer handles ACKs; nothing to do.
-                return;
-            default:
-                // ACK, CRYPTO, NEW_TOKEN, NEW_CONNECTION_ID, RETIRE_CONNECTION_ID,
-                // PATH_CHALLENGE, PATH_RESPONSE, HANDSHAKE_DONE, PADDING are handled
-                // by the connection / handshake layers, not the data plane.
-                return;
+            case QuicFrameType.PADDING:
+            case QuicFrameType.ACK:
+            case QuicFrameType.ACK_ECN:
+            case QuicFrameType.CRYPTO:
+            case QuicFrameType.NEW_TOKEN:
+            case QuicFrameType.NEW_CONNECTION_ID:
+            case QuicFrameType.RETIRE_CONNECTION_ID:
+            case QuicFrameType.PATH_CHALLENGE:
+            case QuicFrameType.PATH_RESPONSE:
+            case QuicFrameType.HANDSHAKE_DONE:
+                // Peer is blocked on a window we control, or a connection /
+                // handshake layer concern — informational / relay only. A full
+                // implementation would pace. We surface nothing here.
+                break;
         }
     }
 
@@ -620,15 +668,16 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
         let stream = streams.get(makeStreamId(frame.streamId));
         if (stream === undefined) {
             // Peer opened a new stream.
-            if (!streamIdIsClientInitiated(makeStreamId(frame.streamId))) {
-                stream = registerIncomingStream(makeStreamId(frame.streamId));
-            } else {
+            if (streamIdIsClientInitiated(makeStreamId(frame.streamId))) {
                 return; // unknown local stream; ignore
             }
+            stream = registerIncomingStream(makeStreamId(frame.streamId));
         }
         const replenish = stream.ingest(frame.offset, frame.data as Bytes, frame.fin);
         connectionDataReceived += BigInt(frame.data.length);
-        if (replenish) sendMaxStreamData(stream);
+        if (replenish) {
+            sendMaxStreamData(stream);
+        }
         // Receiving data grows the connection receive window accounting.
         if (connectionDataReceived >= connectionMaxDataAdvertised / BigInt(REPLENISH_FRACTION)) {
             connectionDataReceived = 0n;
@@ -640,7 +689,9 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
         frame: Extract<QuicFrame, { type: typeof QuicFrameType.RESET_STREAM }>,
     ): void {
         const stream = streams.get(makeStreamId(frame.streamId));
-        if (stream === undefined) return;
+        if (stream === undefined) {
+            return;
+        }
         stream.resetPeer(frame.errorCode, frame.finalSize);
         streams.delete(makeStreamId(frame.streamId));
     }
@@ -649,12 +700,16 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
         frame: Extract<QuicFrame, { type: typeof QuicFrameType.STOP_SENDING }>,
     ): void {
         const stream = streams.get(makeStreamId(frame.streamId));
-        if (stream === undefined) return;
+        if (stream === undefined) {
+            return;
+        }
         stream.stopSending(frame.errorCode);
     }
 
     function handleMaxData(frame: Extract<QuicFrame, { type: typeof QuicFrameType.MAX_DATA }>): void {
-        if (frame.maximum <= connectionMaxData) return;
+        if (frame.maximum <= connectionMaxData) {
+            return;
+        }
         connectionMaxData = frame.maximum;
         emitter.emit("maxData", frame.maximum);
     }
@@ -663,18 +718,24 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
         frame: Extract<QuicFrame, { type: typeof QuicFrameType.MAX_STREAM_DATA }>,
     ): void {
         const stream = streams.get(makeStreamId(frame.streamId));
-        if (stream === undefined) return;
+        if (stream === undefined) {
+            return;
+        }
         stream.growSendWindow(frame.maximum);
     }
 
     function handleMaxStreams(frame: MaxStreamsFrame): void {
         switch (frame.type) {
             case QuicFrameType.MAX_STREAMS_BIDI:
-                if (frame.maximum > peerMaxBidi) peerMaxBidi = frame.maximum;
-                return;
+                if (frame.maximum > peerMaxBidi) {
+                    peerMaxBidi = frame.maximum;
+                }
+                break;
             case QuicFrameType.MAX_STREAMS_UNI:
-                if (frame.maximum > peerMaxUni) peerMaxUni = frame.maximum;
-                return;
+                if (frame.maximum > peerMaxUni) {
+                    peerMaxUni = frame.maximum;
+                }
+                break;
         }
     }
 
@@ -691,15 +752,22 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
     // --- teardown --------------------------------------------------------------
 
     function abortAll(error: Error): void {
-        for (const stream of [...streams.values()]) stream.forceClose({ kind: "connection_close" });
+        for (const stream of streams.values()) {
+            stream.forceClose({ kind: "connection_close" });
+        }
         streams.clear();
-        for (const waiter of acceptWaiters) waiter.reject(error);
+        for (const waiter of acceptWaiters) {
+            waiter.reject(error);
+        }
         acceptWaiters.length = 0;
     }
 
     function close(errorCode: bigint, reason: string): void {
-        if (closed) return;
+        if (closed) {
+            return;
+        }
         closing = true;
+        closed = true;
         deps.sendFrame({
             type: QuicFrameType.CONNECTION_CLOSE,
             errorCode,
@@ -710,7 +778,7 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
 
     const localParameters = deps.localParameters;
 
-    const manager: StreamManager = {
+    const manager = {
         openStream,
         acceptStream,
         dispatch,
@@ -718,18 +786,19 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
         abortAll,
         close,
         get hasPendingSends(): boolean {
-            for (const s of streams.values()) if (s.hasPendingSend) return true;
+            for (const s of streams.values()) {
+                if (s.hasPendingSend) {
+                    return true;
+                }
+            }
             return false;
         },
         get localParameters(): QuicTransportParameters {
             return localParameters;
         },
-    };
-
-    // Mirror EventEmitter's core methods onto the manager so the returned object
-    // satisfies the `StreamManager & EventEmitter` intersection type and callers
-    // can subscribe through a single handle.
-    Object.assign(manager, {
+        // Mirror EventEmitter's core methods onto the manager so the returned
+        // object satisfies the `StreamManager & EventEmitter` intersection type
+        // and callers can subscribe through a single handle.
         on: (event: string | symbol, listener: (...args: unknown[]) => void) =>
             emitter.on(event, listener),
         once: (event: string | symbol, listener: (...args: unknown[]) => void) =>
@@ -740,7 +809,7 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
             emitter.removeListener(event, listener),
         removeAllListeners: (event?: string | symbol) => emitter.removeAllListeners(event),
         emit: (event: string | symbol, ...args: unknown[]) => emitter.emit(event, ...args),
-    });
+    };
 
     return manager as StreamManager & EventEmitter;
 }

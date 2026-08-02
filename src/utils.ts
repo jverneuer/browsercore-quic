@@ -22,7 +22,9 @@ export function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
 /** Concatenate many byte arrays into one. */
 export function concatAll(parts: readonly Uint8Array[]): Uint8Array {
     let total = 0;
-    for (const p of parts) total += p.length;
+    for (const p of parts) {
+        total += p.length;
+    }
     const out = new Uint8Array(total);
     let offset = 0;
     for (const p of parts) {

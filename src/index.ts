@@ -62,7 +62,13 @@ export {
     type UdpAddress,
 } from "./types.js";
 
-export { decodeVarint, encodeVarint, getVarintEncodedLength } from "./frame/varint.js";
+export {
+    decodeVarint,
+    encodeVarint,
+    encodeVarintInto,
+    getVarintEncodedLength,
+    prefixMask,
+} from "./frame/varint.js";
 export { decodeFrame, readFrames, serializeFrame } from "./frame/frame.js";
 export { createStreamManager } from "./stream/stream.js";
 export type { StreamManager } from "./stream/stream.js";

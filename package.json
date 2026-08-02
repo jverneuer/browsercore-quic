@@ -1,50 +1,56 @@
 {
-    "name": "@browsercore/quic",
-    "version": "0.1.3",
-    "description": "QUIC transport (RFC 9000) — packet headers, frames, packet protection, streams, and connection lifecycle over a datagram (UDP) transport. No knowledge of HTTP/3 or TLS handshake semantics.",
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/jverneuer/browsercore-quic.git"
-    },
-    "homepage": "https://github.com/jverneuer/browsercore-quic#readme",
-    "bugs": {
-        "url": "https://github.com/jverneuer/browsercore-quic/issues"
-    },
-    "license": "MIT",
-    "type": "module",
-    "main": "./dist/index.js",
-    "types": "./dist/index.d.ts",
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js"
-        }
-    },
-    "scripts": {
-        "build": "tsc -p tsconfig.json",
-        "typecheck": "tsc -p tsconfig.json --noEmit",
-        "test": "vitest run",
-        "clean": "rm -rf dist *.tsbuildinfo",
-        "lint": "oxlint --type-aware src/"
-    },
-    "devDependencies": {
-        "@types/node": "^26.1.2",
-        "@vitest/coverage-v8": "2.1.8",
-        "typescript": "^7.0.0",
-        "vitest": "2.1.8",
-        "oxlint": "^1.76.0",
-        "oxlint-tsgolint": "7.0.2001"
-    },
-    "dependencies": {
-        "@browsercore/crypto": "latest"
-    },
-    "overrides": {
-        "vitest": "2.1.8"
-    },
-    "engines": {
-        "node": ">=26.0.0"
-    },
-    "publishConfig": {
-        "access": "public"
+  "name": "@browsercore/quic",
+  "version": "0.1.4",
+  "description": "QUIC transport (RFC 9000) — packet headers, frames, packet protection, streams, and connection lifecycle over a datagram (UDP) transport. No knowledge of HTTP/3 or TLS handshake semantics.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jverneuer/browsercore-quic.git"
+  },
+  "homepage": "https://github.com/jverneuer/browsercore-quic#readme",
+  "bugs": {
+    "url": "https://github.com/jverneuer/browsercore-quic/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run clean && npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint --type-aware src/",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@vitest/coverage-v8": "2.1.8",
+    "typescript": "^7.0.0",
+    "vitest": "2.1.8",
+    "oxlint": "^1.76.0",
+    "oxlint-tsgolint": "7.0.2001"
+  },
+  "dependencies": {
+    "@browsercore/crypto": "latest"
+  },
+  "overrides": {
+    "vitest": "2.1.8"
+  },
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

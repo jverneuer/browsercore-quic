@@ -17,11 +17,12 @@
  * many bytes of packet number follow.
  */
 
-import type { ConnectionId, LongPacketTypeValue } from "../types.js";
 import {
     HEADER_FORM_LONG,
     HEADER_FORM_SHORT,
     LONG_PACKET_TYPE_MASK,
+    type ConnectionId,
+    type LongPacketTypeValue,
 } from "../types.js";
 import { decodeVarint, encodeVarint } from "../frame/varint.js";
 import { concatAll } from "../utils.js";
@@ -89,8 +90,12 @@ export function serializeShortHeader(
     keyPhase: boolean,
 ): Uint8Array {
     let first = HEADER_FORM_SHORT << 7;
-    if (spinBit) first |= 1 << 5;
-    if (keyPhase) first |= 1 << 2;
+    if (spinBit) {
+        first |= 1 << 5;
+    }
+    if (keyPhase) {
+        first |= 1 << 2;
+    }
     first |= packetNumberLength - 1;
     return concatAll([new Uint8Array([first]), dcid]);
 }
@@ -105,10 +110,13 @@ export function serializeShortHeader(
  * packet number.
  */
 export function parsePacketHeader(buf: Uint8Array): PacketHeader {
-    if (buf.length < 1) {
+    if (buf.length === 0) {
         throw new RangeError("Buffer too short for packet header");
     }
-    const first = buf[0]!;
+    const first = buf[0];
+    if (first === undefined) {
+        throw new RangeError("Buffer too short for packet header");
+    }
     const form = (first >> 7) & 0x01;
 
     if (form === HEADER_FORM_LONG) {
@@ -126,12 +134,18 @@ function parseLongHeader(first: number, buf: Uint8Array): LongHeader {
     }
     const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     const version = view.getUint32(1);
-    const dcidLen = buf[5]!;
+    const dcidLen = buf[5];
+    if (dcidLen === undefined) {
+        throw new RangeError("Buffer too short for DCID");
+    }
     if (buf.length < 6 + dcidLen + 1) {
         throw new RangeError("Buffer too short for DCID");
     }
     const dcid = buf.subarray(6, 6 + dcidLen);
-    const scidLen = buf[6 + dcidLen]!;
+    const scidLen = buf[6 + dcidLen];
+    if (scidLen === undefined) {
+        throw new RangeError("Buffer too short for SCID");
+    }
     if (buf.length < 6 + dcidLen + 1 + scidLen) {
         throw new RangeError("Buffer too short for SCID");
     }
@@ -201,7 +215,11 @@ export function encodePacketNumber(pn: bigint, encodedBits: number): bigint {
 export function readPacketNumber(buf: Uint8Array, offset: number, length: number): bigint {
     let value = 0n;
     for (let i = 0; i < length; i++) {
-        value = (value << 8n) | BigInt(buf[offset + i]!);
+        const byte = buf[offset + i];
+        if (byte === undefined) {
+            throw new RangeError(`Buffer too short for packet number at offset ${offset + i}`);
+        }
+        value = (value << 8n) | BigInt(byte);
     }
     return value;
 }

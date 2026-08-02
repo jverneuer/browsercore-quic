@@ -295,6 +295,142 @@ describe("frame round-trip", () => {
         const frame = await readOneFrame(serializeFrame({ type: QuicFrameType.HANDSHAKE_DONE }));
         expect(frame.type).toBe(QuicFrameType.HANDSHAKE_DONE);
     });
+
+    it("ACK_ECN round-trips the ack ranges and ECN counts", async () => {
+        const serialized = serializeFrame({
+            type: QuicFrameType.ACK_ECN,
+            largestAck: 50n,
+            ackDelay: 2n,
+            ackRangeCount: 1n,
+            firstAckRange: 5n,
+            ackRanges: [{ gap: 1n, ackRangeLength: 2n }],
+            ecnCounts: { ect0: 1n, ect1: 2n, ce: 3n },
+        });
+        const frame = await readOneFrame(serialized);
+        expect(frame.type).toBe(QuicFrameType.ACK_ECN);
+        if (frame.type !== QuicFrameType.ACK_ECN) return;
+        expect(frame.ackRanges).toEqual([{ gap: 1n, ackRangeLength: 2n }]);
+        expect(frame.ecnCounts).toEqual({ ect0: 1n, ect1: 2n, ce: 3n });
+    });
+
+    it("STREAMS_BLOCKED_UNI round-trips", async () => {
+        const serialized = serializeFrame({ type: QuicFrameType.STREAMS_BLOCKED_UNI, limit: 7n });
+        const frame = await readOneFrame(serialized);
+        expect(frame.type).toBe(QuicFrameType.STREAMS_BLOCKED_UNI);
+        if (frame.type !== QuicFrameType.STREAMS_BLOCKED_UNI) return;
+        expect(frame.limit).toBe(7n);
+    });
+
+    it("PATH_RESPONSE round-trips", async () => {
+        const data = new Uint8Array(8).fill(0x22);
+        const serialized = serializeFrame({ type: QuicFrameType.PATH_RESPONSE, data });
+        const frame = await readOneFrame(serialized);
+        expect(frame.type).toBe(QuicFrameType.PATH_RESPONSE);
+        if (frame.type !== QuicFrameType.PATH_RESPONSE) return;
+        expect(frame.data.length).toBe(8);
+    });
+
+    it("CONNECTION_CLOSE_APP round-trips", async () => {
+        const serialized = serializeFrame({
+            type: QuicFrameType.CONNECTION_CLOSE_APP,
+            errorCode: 0x01n,
+            frameType: 0x06n,
+            reason: "app",
+        });
+        const frame = await readOneFrame(serialized);
+        expect(frame.type).toBe(QuicFrameType.CONNECTION_CLOSE_APP);
+        if (frame.type !== QuicFrameType.CONNECTION_CLOSE_APP) return;
+        expect(frame.errorCode).toBe(0x01n);
+        expect(frame.reason).toBe("app");
+    });
+});
+
+describe("readFrames error paths", () => {
+    it("throws when a varint is truncated mid-stream", async () => {
+        // First byte declares a 2-byte varint (prefix 01) but no follow-up byte.
+        const buf = new Uint8Array([0x40]);
+        let offset = 0;
+        const read = async (): Promise<Uint8Array | null> => {
+            if (offset >= buf.length) return null;
+            const chunk = buf.subarray(offset);
+            offset = buf.length;
+            return chunk;
+        };
+        const iterable = readFrames(read);
+        const iterator = iterable[Symbol.asyncIterator]();
+        await expect(iterator.next()).rejects.toThrow(/unexpected end of frame data/);
+    });
+
+    it("throws when STREAM data is truncated to fewer bytes than declared", async () => {
+        // Build a STREAM frame whose length varint says 10 bytes but only 2 follow.
+        const serialized = serializeFrame({
+            type: QuicFrameType.STREAM,
+            streamId: 0n,
+            offset: 0n,
+            data: new Uint8Array([0x01, 0x02, 0x03]),
+            fin: false,
+        });
+        // Truncate to type + streamid + offset(0) + length varint, then 1 data byte.
+        // The length varint (3) is at the end; replace the trailing data with 1 byte.
+        const truncated = serialized.subarray(0, serialized.length - 2);
+        let offset = 0;
+        const read = async (): Promise<Uint8Array | null> => {
+            if (offset >= truncated.length) return null;
+            const chunk = truncated.subarray(offset);
+            offset = truncated.length;
+            return chunk;
+        };
+        const iterable = readFrames(read);
+        const iterator = iterable[Symbol.asyncIterator]();
+        await expect(iterator.next()).rejects.toThrow(/unexpected end of frame data/);
+    });
+});
+
+describe("STREAM decode: raw type-byte cases the serializer never emits", () => {
+    // The serializer always sets the LEN bit (and OFF when offset>0), so it
+    // emits 0x0a/0x0b/0x0e/0x0f. The decoder must still accept the bare
+    // 0x08 (no flags) and 0x09 (FIN only) forms a peer could send.
+
+    it("decodes a bare 0x08 STREAM (no offset/fin/len flags)", async () => {
+        // type=0x08, streamId=0, length=1, data=0xff
+        const buf = new Uint8Array([0x08, 0x00, 0x01, 0xff]);
+        const frame = await readOneFrame(buf);
+        expect(frame.type).toBe(QuicFrameType.STREAM);
+        if (frame.type !== QuicFrameType.STREAM) return;
+        expect(frame.offset).toBe(0n);
+        expect(frame.fin).toBe(false);
+        expect(Array.from(frame.data)).toEqual([0xff]);
+    });
+
+    it("decodes a 0x09 STREAM (FIN flag only)", async () => {
+        // type=0x09, streamId=0, length=1, data=0xff
+        const buf = new Uint8Array([0x09, 0x00, 0x01, 0xff]);
+        const frame = await readOneFrame(buf);
+        expect(frame.type).toBe(QuicFrameType.STREAM);
+        if (frame.type !== QuicFrameType.STREAM) return;
+        expect(frame.fin).toBe(true);
+    });
+});
+
+describe("decodeFrame", () => {
+    it("maps an unknown frame type to PADDING (RFC 9000 ignore rule)", async () => {
+        // 0xff is not a valid QUIC frame type; the decoder must not throw.
+        const readVarint = async (): Promise<bigint> => {
+            throw new Error("should not read body");
+        };
+        const readBytes = async (): Promise<Uint8Array> => new Uint8Array(0);
+        const frame = await decodeFrame(0xffn, readVarint, readBytes);
+        expect(frame.type).toBe(QuicFrameType.PADDING);
+    });
+});
+
+describe("serializeFrame", () => {
+    it("its exhaustiveness default throws for an unknown frame variant", () => {
+        // The discriminated union has no member at type-byte 0x7f; the type
+        // system forbids it, so we cast to exercise the assertNever guard.
+        const bogus = { type: 0x7f } as unknown as QuicFrame;
+        expect(() => serializeFrame(bogus)).toThrow(/Unexpected value/);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -338,5 +474,50 @@ describe("packet header", () => {
     it("readPacketNumber reads big-endian bytes", () => {
         const buf = new Uint8Array([0x00, 0x01, 0x02]);
         expect(readPacketNumber(buf, 0, 3)).toBe(0x000102n);
+    });
+
+    it("throws when the buffer is empty", () => {
+        expect(() => parsePacketHeader(new Uint8Array(0))).toThrow(/too short for packet header/);
+    });
+
+    it("throws when a long header is truncated before the minimum length", () => {
+        // First byte = long header (form=1), then only 5 bytes (need >=7).
+        const buf = new Uint8Array([0xc0, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        expect(() => parsePacketHeader(buf)).toThrow(/too short for long header/);
+    });
+
+    it("throws when a long header's DCID runs past the buffer end", () => {
+        // first=0xc0, version(4 bytes)=0..0, dcidLen=10 => need 6+10+1=17 bytes.
+        const buf = new Uint8Array(10);
+        buf[0] = 0xc0;
+        buf[5] = 10; // dcidLen
+        expect(() => parsePacketHeader(buf)).toThrow(/too short for DCID/);
+    });
+
+    it("throws when a long header's SCID runs past the buffer end", () => {
+        // first=0xc0, version(4), dcidLen=0, scidLen=5 => need 6+0+1+5=12 bytes.
+        const buf = new Uint8Array(11);
+        buf[0] = 0xc0;
+        buf[5] = 0; // dcidLen = 0
+        buf[6] = 5; // scidLen = 5
+        expect(() => parsePacketHeader(buf)).toThrow(/too short for SCID/);
+    });
+
+    it("decodePacketNumber adds pnWin when the candidate is well below the window", () => {
+        // expected=98304 (=pnWin+pnHwin); truncated=0 makes candidate=pnWin
+        // (65536), which is <= expected-pnHwin (65536) -> +pnWin branch.
+        const largest = 98_303n;
+        const truncated = 0n;
+        const decoded = decodePacketNumber(largest, truncated, 16);
+        expect(decoded).toBe(131_072n); // candidate + pnWin
+    });
+
+    it("decodePacketNumber subtracts pnWin when the candidate is well above the window", () => {
+        // expected=65536; truncated=32769 makes candidate=98305, which is >
+        // expected+pnHwin (98304) -> -pnWin branch.
+        const largest = 65_535n;
+        const truncated = 32_769n;
+        const decoded = decodePacketNumber(largest, truncated, 16);
+        expect(decoded).toBe(32_769n); // candidate - pnWin
     });
 });

@@ -8,13 +8,13 @@
  * Pure wire-format logic — no I/O.
  */
 
-import { assertNever } from "../utils.js";
+import { assertNever, concatAll } from "../utils.js";
 
 /** Maximum value encodable in a QUIC varint (2^62 - 1). */
 export const VARINT_MAX = (1n << 62n) - 1n;
 
 /** The length prefix mask in the first byte's top two bits, per encoded length. */
-function prefixMask(length: 1 | 2 | 4 | 8): number {
+export function prefixMask(length: 1 | 2 | 4 | 8): number {
     switch (length) {
         case 1:
             return 0x00; // 00
@@ -31,21 +31,35 @@ function prefixMask(length: 1 | 2 | 4 | 8): number {
 
 /** Return the number of bytes needed to encode `value` as a varint. */
 export function getVarintEncodedLength(value: bigint): 1 | 2 | 4 | 8 {
-    if (value < 0n) throw new RangeError(`varint cannot be negative: ${value}`);
-    if (value > VARINT_MAX) throw new RangeError(`varint overflow: ${value}`);
-    if (value < (1n << 6n)) return 1;
-    if (value < (1n << 14n)) return 2;
-    if (value < (1n << 30n)) return 4;
+    if (value < 0n) {
+        throw new RangeError(`varint cannot be negative: ${value}`);
+    }
+    if (value > VARINT_MAX) {
+        throw new RangeError(`varint overflow: ${value}`);
+    }
+    if (value < (1n << 6n)) {
+        return 1;
+    }
+    if (value < (1n << 14n)) {
+        return 2;
+    }
+    if (value < (1n << 30n)) {
+        return 4;
+    }
     return 8;
 }
 
-/** Encode a varint to its wire representation. */
-export function encodeVarint(value: bigint): Uint8Array {
-    const length = getVarintEncodedLength(value);
-    const out = new Uint8Array(length);
+/**
+ * Write a varint's payload into a pre-allocated buffer of the correct length.
+ * The switch is exhaustive over the lengths {@link getVarintEncodedLength} can
+ * return; the `default` is a compile-time guard that also serves as a runtime
+ * check should the length ever be miscomputed. Exported so the exhaustiveness
+ * guard is independently testable (via cast).
+ */
+export function encodeVarintInto(out: Uint8Array, value: bigint, length: 1 | 2 | 4 | 8): void {
     switch (length) {
         case 1:
-            out[0] = Number(value);
+            out[0] = prefixMask(1) | Number(value);
             break;
         case 2:
             out[0] = prefixMask(2) | Number((value >> 8n) & 0xffn);
@@ -72,6 +86,13 @@ export function encodeVarint(value: bigint): Uint8Array {
         default:
             assertNever(length);
     }
+}
+
+/** Encode a varint to its wire representation. */
+export function encodeVarint(value: bigint): Uint8Array {
+    const length = getVarintEncodedLength(value);
+    const out = new Uint8Array(length);
+    encodeVarintInto(out, value, length);
     return out;
 }
 
@@ -83,7 +104,10 @@ export function decodeVarint(buf: Uint8Array, offset = 0): { readonly value: big
     if (offset >= buf.length) {
         throw new RangeError(`Buffer too short for varint at offset ${offset}`);
     }
-    const first = buf[offset]!;
+    const first = buf[offset];
+    if (first === undefined) {
+        throw new RangeError(`Buffer too short for varint at offset ${offset}`);
+    }
     const length = 1 << ((first >> 6) & 0x03); // 1,2,4,8
     if (buf.length < offset + length) {
         throw new RangeError(`Buffer too short for ${length}-byte varint at offset ${offset}`);
@@ -91,7 +115,11 @@ export function decodeVarint(buf: Uint8Array, offset = 0): { readonly value: big
     // Clear the top 2 prefix bits to recover the first 6 payload bits.
     let value = BigInt(first & 0x3f);
     for (let i = 1; i < length; i++) {
-        value = (value << 8n) | BigInt(buf[offset + i]!);
+        const byte = buf[offset + i];
+        if (byte === undefined) {
+            throw new RangeError(`Buffer too short for ${length}-byte varint at offset ${offset}`);
+        }
+        value = (value << 8n) | BigInt(byte);
     }
     return { value, length };
 }
@@ -106,7 +134,10 @@ export async function readVarint(read: () => Promise<Uint8Array>): Promise<{
 }> {
     // Read the first byte to learn the length.
     const firstChunk = await read();
-    const first = firstChunk[0]!;
+    const first = firstChunk[0];
+    if (first === undefined) {
+        throw new RangeError("Buffer too short for varint");
+    }
     const length = 1 << ((first >> 6) & 0x03);
     // Collect any remaining bytes of the varint.
     const collected: Uint8Array[] = [firstChunk];
@@ -120,5 +151,3 @@ export async function readVarint(read: () => Promise<Uint8Array>): Promise<{
     const { value } = decodeVarint(all);
     return { value, bytes: all };
 }
-
-import { concatAll } from "../utils.js";

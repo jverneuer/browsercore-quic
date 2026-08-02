@@ -11,8 +11,14 @@
  * into the type byte; the reader/writer handle that transparently.
  */
 
-import type { QuicFrame, QuicFrameTypeValue } from "../types.js";
-import { QuicFrameType, STREAM_OFF_BIT, STREAM_LEN_BIT, STREAM_FIN_BIT } from "../types.js";
+import {
+    QuicFrameType,
+    STREAM_OFF_BIT,
+    STREAM_LEN_BIT,
+    STREAM_FIN_BIT,
+    type QuicFrame,
+    type QuicFrameTypeValue,
+} from "../types.js";
 import { decodeVarint, encodeVarint } from "./varint.js";
 import { assertNever, concat, concatAll } from "../utils.js";
 
@@ -84,10 +90,14 @@ export function serializeFrame(frame: QuicFrame): Uint8Array {
         case QuicFrameType.STREAM: {
             // Reconstruct the type byte with off/len/fin flags.
             let typeByte = QuicFrameType.STREAM;
-            if (frame.offset > 0n) typeByte |= STREAM_OFF_BIT;
+            if (frame.offset > 0n) {
+                typeByte |= STREAM_OFF_BIT;
+            }
             // Length is always present in this encoding (simplification).
             typeByte |= STREAM_LEN_BIT;
-            if (frame.fin) typeByte |= STREAM_FIN_BIT;
+            if (frame.fin) {
+                typeByte |= STREAM_FIN_BIT;
+            }
             const length = BigInt(frame.data.length);
             return concatAll([
                 encodeVarint(BigInt(typeByte)),
@@ -145,13 +155,13 @@ export function serializeFrame(frame: QuicFrame): Uint8Array {
 
         case QuicFrameType.CONNECTION_CLOSE:
         case QuicFrameType.CONNECTION_CLOSE_APP: {
+            // Per RFC 9000 §19.19 the frame-type field is always present; when the
+            // caller omits it we encode 0 (no specific frame triggered the close).
             const reasonBytes = new TextEncoder().encode(frame.reason) as Uint8Array<ArrayBuffer>;
             return concatAll([
                 encodeVarint(BigInt(frame.type)),
                 encodeVarint(frame.errorCode),
-                frame.frameType !== undefined
-                    ? encodeVarint(frame.frameType)
-                    : new Uint8Array(0),
+                encodeVarint(frame.frameType ?? 0n),
                 encodeVarint(BigInt(reasonBytes.length)),
                 reasonBytes,
             ]);
@@ -171,7 +181,7 @@ export function readFrames(
 ): AsyncGenerator<QuicFrame, void, unknown> {
     return {
         [Symbol.asyncIterator]() {
-            let buffer: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+            let buffer: Uint8Array = new Uint8Array(0);
             let done = false;
 
             async function fill(minBytes: number): Promise<boolean> {
@@ -187,11 +197,18 @@ export function readFrames(
             }
 
             async function readVarintFromBuffer(): Promise<bigint> {
-                // Ensure at least one byte to read the length prefix.
+                // Ensure at least one byte is buffered so the length prefix is
+                // readable; fill() returns false only at end-of-stream. We then
+                // pull any extra bytes a multi-byte varint needs.
                 if (!(await fill(1))) {
                     throw new Error("unexpected end of frame data");
                 }
-                const first = buffer[0]!;
+                const first = buffer[0];
+                if (first === undefined) {
+                    // fill(1) returning true guarantees a byte is present; this is
+                    // a defensive guard for the noUncheckedIndexedAccess narrowing.
+                    throw new Error("unexpected end of frame data");
+                }
                 const length = 1 << ((first >> 6) & 0x03);
                 if (!(await fill(length))) {
                     throw new Error("unexpected end of frame data");
@@ -229,7 +246,7 @@ export function readFrames(
                 },
             };
         },
-    } as AsyncGenerator<QuicFrame>;
+    } as AsyncGenerator<QuicFrame, void, unknown>;
 }
 
 /** Decode a single frame given its type value and byte-reading helpers. */
@@ -327,8 +344,10 @@ export async function decodeFrame(
         case 0x0fn: {
             const typeByte = Number(type);
             const streamId = await readVarint();
+            // The serializer always sets the offset bit when offset > 0 and always
+            // sets the length bit, so both fields are always present on the wire.
             const offset = typeByte & STREAM_OFF_BIT ? await readVarint() : 0n;
-            const length = typeByte & STREAM_LEN_BIT ? await readVarint() : await readVarint();
+            const length = await readVarint();
             const data = await readBytes(length);
             const fin = (typeByte & STREAM_FIN_BIT) !== 0;
             return { type: QuicFrameType.STREAM, streamId, offset, data, fin };
