@@ -143,6 +143,9 @@ export async function readVarint(read: () => Promise<Uint8Array>): Promise<{
     const collected: Uint8Array[] = [firstChunk];
     let have = firstChunk.length;
     while (have < length) {
+        // Sequential: each read() consumes from the ordered source and we don't
+        // know how many chunks are needed until the previous arrives.
+        // eslint-disable-next-line no-await-in-loop -- ordered stream consumption, length unknown a priori
         const chunk = await read();
         collected.push(chunk);
         have += chunk.length;

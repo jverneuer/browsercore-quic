@@ -186,6 +186,9 @@ export function readFrames(
 
             async function fill(minBytes: number): Promise<boolean> {
                 while (buffer.length < minBytes && !done) {
+                    // Pull from the ordered source until enough bytes are buffered;
+                    // the number of chunks needed isn't known until each arrives.
+                    // eslint-disable-next-line no-await-in-loop -- ordered stream fill, count unknown a priori
                     const chunk = await read();
                     if (chunk === null) {
                         done = true;
@@ -268,7 +271,9 @@ export async function decodeFrame(
             const firstAckRange = await readVarint();
             const ackRanges: Array<{ gap: bigint; ackRangeLength: bigint }> = [];
             for (let i = 0n; i < ackRangeCount; i++) {
+                // eslint-disable-next-line no-await-in-loop -- ordered byte-stream consumption; readVarint mutates shared buffer
                 const gap = await readVarint();
+                // eslint-disable-next-line no-await-in-loop -- paired ack-range length, must follow the gap read
                 const ackRangeLength = await readVarint();
                 ackRanges.push({ gap, ackRangeLength });
             }
@@ -289,7 +294,9 @@ export async function decodeFrame(
             const firstAckRange = await readVarint();
             const ackRanges: Array<{ gap: bigint; ackRangeLength: bigint }> = [];
             for (let i = 0n; i < ackRangeCount; i++) {
+                // eslint-disable-next-line no-await-in-loop -- ordered byte-stream consumption; readVarint mutates shared buffer
                 const gap = await readVarint();
+                // eslint-disable-next-line no-await-in-loop -- paired ack-range length, must follow the gap read
                 const ackRangeLength = await readVarint();
                 ackRanges.push({ gap, ackRangeLength });
             }
