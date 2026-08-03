@@ -42,7 +42,7 @@
     "oxlint-tsgolint": "7.0.2001"
   },
   "dependencies": {
-    "@browsercore/crypto": "latest"
+    "@browsercore/crypto": "0.1.4"
   },
   "overrides": {
     "vitest": "2.1.8"
