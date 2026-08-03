@@ -5,11 +5,14 @@ on:
   pull_request:
     branches: [main]
 jobs:
-  build-and-test:
+  build-and-publish:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.current }}
+      changed: ${{ steps.version.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,6 +30,31 @@ jobs:
       - name: Generate COVERAGE.md
         run: node scripts/coverage-md.mjs
       - run: npm run build
+
+      # Determine whether this push changed the package version vs. the previous
+      # commit on main. Publish + tag/release are gated on this so a push that
+      # only touches source/docs/CI never triggers an npm publish or a release.
+      - name: Detect version change
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          # Version at the parent commit (empty if this is the first commit).
+          PARENT=$(git rev-parse --short HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PARENT" ]; then
+            CHANGED="true"
+          else
+            PREVIOUS=$(git show "$PARENT:package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || echo "")
+            if [ "$CURRENT" != "$PREVIOUS" ]; then
+              CHANGED="true"
+            else
+              CHANGED="false"
+            fi
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "Version $CURRENT (previous: ${PREVIOUS:-<none>}) — changed: $CHANGED"
+
       - name: Commit COVERAGE.md
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -41,20 +69,22 @@ jobs:
             git commit -m "ci: update coverage report [skip ci]"
             git push
           fi
-      - name: Publish to npm if version is new
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+      - name: Publish to npm
+        if: steps.version.outputs.changed == 'true'
         run: |
           VERSION=$(node -p "require('./package.json').version")
           NAME=$(node -p "require('./package.json').name")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
             echo "$NAME@$VERSION already on npm — skipping publish"
-          else
-            npm publish --access public
+            exit 0
           fi
+          npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Create git tag and GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: steps.version.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
