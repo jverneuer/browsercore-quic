@@ -186,6 +186,7 @@ export function readFrames(
 
             async function fill(minBytes: number): Promise<boolean> {
                 while (buffer.length < minBytes && !done) {
+                    // eslint-disable-next-line no-await-in-loop — stream read: must buffer sequentially until minBytes satisfied
                     const chunk = await read();
                     if (chunk === null) {
                         done = true;
@@ -268,7 +269,9 @@ export async function decodeFrame(
             const firstAckRange = await readVarint();
             const ackRanges: Array<{ gap: bigint; ackRangeLength: bigint }> = [];
             for (let i = 0n; i < ackRangeCount; i++) {
+                // eslint-disable-next-line no-await-in-loop — ACK ranges are length-prefixed; must decode sequentially
                 const gap = await readVarint();
+                // eslint-disable-next-line no-await-in-loop — ACK ranges are length-prefixed; must decode sequentially
                 const ackRangeLength = await readVarint();
                 ackRanges.push({ gap, ackRangeLength });
             }
@@ -289,7 +292,9 @@ export async function decodeFrame(
             const firstAckRange = await readVarint();
             const ackRanges: Array<{ gap: bigint; ackRangeLength: bigint }> = [];
             for (let i = 0n; i < ackRangeCount; i++) {
+                // eslint-disable-next-line no-await-in-loop — ACK_ECN ranges are length-prefixed; must decode sequentially
                 const gap = await readVarint();
+                // eslint-disable-next-line no-await-in-loop — ACK_ECN ranges are length-prefixed; must decode sequentially
                 const ackRangeLength = await readVarint();
                 ackRanges.push({ gap, ackRangeLength });
             }
