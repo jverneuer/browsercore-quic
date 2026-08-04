@@ -1,6 +1,6 @@
 {
     "name": "@browsercore/quic",
-    "version": "0.1.7",
+    "version": "0.2.0",
     "description": "QUIC transport (RFC 9000) — packet headers, frames, packet protection, streams, and connection lifecycle over a datagram (UDP) transport. No knowledge of HTTP/3 or TLS handshake semantics.",
     "repository": {
         "type": "git",
@@ -34,7 +34,7 @@
         "test": "vitest run"
     },
     "devDependencies": {
-        "@browsercore/dev": "^0.1.2",
+        "@browsercore/dev": "^0.2.0",
         "@types/node": "^26.1.2",
         "@vitest/coverage-v8": "^4.1.10",
         "oxlint": "^1.76.0",
@@ -43,7 +43,7 @@
         "vitest": "^4.1.10"
     },
     "dependencies": {
-        "@browsercore/crypto": "0.1.4"
+        "@browsercore/crypto": "^0.2.0"
     },
     "engines": {
         "node": ">=26.0.0"
