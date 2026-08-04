@@ -19,7 +19,7 @@ import {
 import { serializeFrame, readFrames } from "../src/frame/frame.js";
 import { serializeShortHeader, serializeLongHeader } from "../src/packet/packet.js";
 import { concatAll } from "../src/utils.js";
-import { createFakeDatagramPair, LOCAL_ADDR, PEER_ADDR } from "./fake-transport.js";
+import { FakeDatagramTransport, createFakeDatagramPair, LOCAL_ADDR, PEER_ADDR } from "./fake-transport.js";
 
 /** Wait a macrotask so the connection's async read loop drains queued work. */
 const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
@@ -264,6 +264,72 @@ describe("close lifecycle", () => {
         // Every transport-parameter branch in resolveLocalParameters executes on
         // construction; the connection still opens streams normally.
         expect((await c.openBidirectionalStream()).id).toBe(0n);
+        await c.close(0n, "done");
+    });
+});
+
+describe("read loop fatal error handling", () => {
+    it("tears down via _handleFatal when the transport closes underneath it", async () => {
+        // The read loop is parked on transport.recv(); if the underlying
+        // transport dies (e.g. socket error), recv() rejects and the loop must
+        // call _handleFatal → abortAll + _teardown rather than spinning forever.
+        const { conn, client } = makeConn();
+        const c = await conn;
+        client.close(); // simulate the transport dying mid-read
+        await tick();
+        await tick();
+
+        // _teardown runs best-effort transport.close() again; the connection is
+        // now closed and stream operations reject.
+        await expect(c.openBidirectionalStream()).rejects.toThrow(/closing/);
+        expect(client.isClosed).toBe(true);
+    });
+
+    it("ignores a second CONNECTION_CLOSE (peer close after closed)", async () => {
+        // The first CONNECTION_CLOSE tears the connection down; a second one must
+        // hit onPeerClose's `if (this.closed) return` guard without re-entering
+        // teardown. onPeerClose runs once.
+        const { conn, client, server } = makeConn();
+        const c = await conn;
+        const closeFrame = makePacket({
+            type: QuicFrameType.CONNECTION_CLOSE,
+            errorCode: 0x0cn,
+            frameType: undefined,
+            reason: "bye",
+        });
+        server.send(closeFrame, LOCAL_ADDR);
+        await tick();
+        expect(client.isClosed).toBe(true);
+        // Second close must not throw or double-teardown.
+        server.send(closeFrame, LOCAL_ADDR);
+        await tick();
+        expect(client.isClosed).toBe(true);
+    });
+
+    it("flushes outbound frames produced while dispatching a STREAM frame", async () => {
+        // Dispatching a STREAM frame that crosses the per-stream replenish
+        // threshold makes the manager emit a MAX_STREAM_DATA frame; the
+        // connection's withOutbound must flush it to the peer.
+        const { conn, server } = makeConn();
+        const c = await conn;
+        // Default advertised per-stream window is 256 KiB; half is the
+        // replenish threshold, so 200 KiB of stream data crosses it.
+        const big = new Uint8Array(200_000).fill(0x51);
+        server.send(
+            makePacket({
+                type: QuicFrameType.STREAM,
+                streamId: 1n,
+                offset: 0n,
+                data: big,
+                fin: false,
+            }),
+            LOCAL_ADDR,
+        );
+        await tick();
+
+        // The connection flushed a packet (carrying MAX_STREAM_DATA) to the peer.
+        const flushed = await server.recv();
+        expect(flushed.data.length).toBeGreaterThan(2);
         await c.close(0n, "done");
     });
 });
