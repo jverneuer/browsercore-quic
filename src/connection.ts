@@ -12,8 +12,8 @@
  *     that moves *unprotected* frames over the transport directly — enough to
  *     drive the data plane and to be tested with a fake datagram transport. A
  *     production build layers protection + the handshake on top of this.
- *   - No congestion controller, no connection migration, no PATH_CHALLENGE /
- *     PATH_RESPONSE beyond frame relay, and no liveness PING.
+ *   - No connection migration beyond PATH_CHALLENGE / PATH_RESPONSE, and no
+ *     liveness PING.
  *
  * Concurrency model: the read loop is a single async task pulling datagrams from
  * the transport. Outbound frames are produced synchronously by the stream
@@ -35,7 +35,7 @@ import { parsePacketHeader, serializeShortHeader, type PacketHeader } from "./pa
 import { readFrames, serializeFrame } from "./frame/frame.js";
 import { ConnectionClosedError } from "./errors.js";
 import { createStreamManager, type StreamManager } from "./stream/stream.js";
-import { concatAll } from "./utils.js";
+import { concatAll, hex } from "./utils.js";
 import {
     decodeTransportParameters,
     encodeTransportParameters,
@@ -70,6 +70,14 @@ export class QuicConnectionImpl implements QuicConnection {
      * time so a TLS layer can carry them to the peer in the QUIC extension.
      */
     private readonly encodedLocalParameters: Uint8Array;
+
+    /**
+     * PATH_CHALLENGEs we have issued and are awaiting a PATH_RESPONSE for,
+     * keyed by the hex-encoded 8-byte challenge data (RFC 9000 §8.2.1).
+     * A full implementation would also track the address pair being validated
+     * and retire stale challenges on a timer; this is the data plane only.
+     */
+    private readonly pendingPathChallenges = new Set<string>();
 
     /** Set once the connection begins graceful shutdown. */
     private closing = false;
@@ -136,6 +144,26 @@ export class QuicConnectionImpl implements QuicConnection {
         // Pack + flush the CONNECTION_CLOSE frame, then tear down.
         await this.flush();
         await this._teardown({ kind: "client_close" });
+    }
+
+    // --- path validation (RFC 9000 §8.2.1, §19.17) -----------------------------
+
+    /**
+     * Send a PATH_CHALLENGE to validate a path. Records the 8-byte challenge
+     * (copied) so a matching PATH_RESPONSE from the peer validates the path.
+     */
+    public sendPathChallenge(data: Uint8Array): void {
+        if (data.length !== 8) {
+            throw new RangeError(`PATH_CHALLENGE data must be 8 bytes, got ${data.length}`);
+        }
+        this.pendingPathChallenges.add(hex(data));
+        this.sendFrame({ type: QuicFrameType.PATH_CHALLENGE, data: data.slice() });
+        void this.flush();
+    }
+
+    /** True if a PATH_CHALLENGE with the given data is awaiting a PATH_RESPONSE. */
+    public hasPendingPathChallenge(data: Uint8Array): boolean {
+        return this.pendingPathChallenges.has(hex(data));
     }
 
     // --- frame I/O -------------------------------------------------------------
@@ -292,11 +320,12 @@ export class QuicConnectionImpl implements QuicConnection {
 
     /** Route a decoded frame: data-plane frames to the manager, the rest here. */
     private handleFrame(frame: QuicFrame): void {
-        // Connection / handshake layer concerns (PADDING, PING, ACK, CRYPTO,
-        // NEW_TOKEN, NEW_CONNECTION_ID, RETIRE_CONNECTION_ID, PATH_CHALLENGE,
-        // PATH_RESPONSE, HANDSHAKE_DONE) — relay only. Data-plane frames are
-        // dispatched to the stream manager, which may emit outbound control
-        // frames (MAX_DATA, MAX_STREAM_DATA, ...).
+        // Data-plane frames are dispatched to the stream manager, which may emit
+        // outbound control frames (MAX_DATA, MAX_STREAM_DATA, ...). Connection /
+        // handshake layer concerns (PADDING, PING, ACK, CRYPTO, NEW_TOKEN,
+        // NEW_CONNECTION_ID, RETIRE_CONNECTION_ID, HANDSHAKE_DONE) are relayed
+        // only. PATH_CHALLENGE / PATH_RESPONSE are handled below for path
+        // validation (RFC 9000 §8.2.1).
         switch (frame.type) {
             case QuicFrameType.RESET_STREAM:
             case QuicFrameType.STOP_SENDING:
@@ -326,10 +355,27 @@ export class QuicConnectionImpl implements QuicConnection {
             case QuicFrameType.NEW_TOKEN:
             case QuicFrameType.NEW_CONNECTION_ID:
             case QuicFrameType.RETIRE_CONNECTION_ID:
-            case QuicFrameType.PATH_CHALLENGE:
-            case QuicFrameType.PATH_RESPONSE:
             case QuicFrameType.HANDSHAKE_DONE:
                 break;
+            // Path validation (RFC 9000 §8.2.1, §19.17). A peer-sent challenge is
+            // answered with a matching PATH_RESPONSE; a PATH_RESPONSE from the
+            // peer validates a challenge we sent.
+            case QuicFrameType.PATH_CHALLENGE: {
+                // frame is narrowed to PathChallengeFrame here; respond with the
+                // same 8 bytes (RFC 9000 §19.17).
+                const challenge = frame;
+                this.sendFrame({ type: QuicFrameType.PATH_RESPONSE, data: challenge.data });
+                void this.flush();
+                break;
+            }
+            case QuicFrameType.PATH_RESPONSE: {
+                // frame is narrowed to PathResponseFrame here; drop the matching
+                // challenge from the pending set. An unmatched response is a
+                // no-op (silently ignored).
+                const response = frame;
+                this.pendingPathChallenges.delete(hex(response.data));
+                break;
+            }
         }
     }
 

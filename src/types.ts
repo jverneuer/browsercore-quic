@@ -407,6 +407,14 @@ export interface QuicConnection {
     acceptUnidirectionalStream(): Promise<QuicStream>;
     /** Close the QUIC connection with an error code and reason. */
     close(errorCode: bigint, reason: string): Promise<void>;
+    /**
+     * Send a PATH_CHALLENGE to validate a path (RFC 9000 §8.2.1, §19.17).
+     * Records the 8-byte challenge so a matching PATH_RESPONSE from the peer
+     * validates the path.
+     */
+    sendPathChallenge(data: Uint8Array): void;
+    /** True if a PATH_CHALLENGE with the given data is awaiting a PATH_RESPONSE. */
+    hasPendingPathChallenge(data: Uint8Array): boolean;
 }
 
 /** Options for {@link connectQuic}. */
