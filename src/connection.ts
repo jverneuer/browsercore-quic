@@ -141,13 +141,15 @@ export class QuicConnectionImpl implements QuicConnection {
         }
         const frames = this.outboundFrames.splice(0);
         const payload = this.packFrames(frames);
-        let offset = 0;
-        while (offset < payload.length) {
+        // Each fragment is an independent datagram (own slice, own packet); build
+        // them all, then send concurrently rather than serializing independent sends.
+        const sends: Promise<unknown>[] = [];
+        for (let offset = 0; offset < payload.length; offset += MAX_DATAGRAM_PAYLOAD) {
             const slice = payload.subarray(offset, offset + MAX_DATAGRAM_PAYLOAD) as Bytes;
             const packet = this.wrapPacket(slice);
-            await this.transport.send(packet, this.peer);
-            offset += MAX_DATAGRAM_PAYLOAD;
+            sends.push(this.transport.send(packet, this.peer));
         }
+        await Promise.all(sends);
     }
 
     /** Serialize frames into a single byte buffer (no packet header). */
@@ -302,7 +304,11 @@ export class QuicConnectionImpl implements QuicConnection {
     private async readLoop(): Promise<void> {
         try {
             while (!this.closed) {
+                // The read loop pulls one datagram at a time and must process it
+                // before pulling the next (ordered, in-order frame dispatch).
+                // eslint-disable-next-line no-await-in-loop -- sequential datagram consumption is required
                 const { data } = await this.transport.recv();
+                // eslint-disable-next-line no-await-in-loop -- dispatch must complete before the next datagram
                 await this.dispatchDatagram(data as Bytes);
                 // Drain any pending stream sends after handling each datagram.
                 this.drainSends();
