@@ -19,14 +19,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
-      # The shared @browsercore/dev config package lives in a sibling repo.
-      # Consumers depend on it via "file:../dev", so the runner must check it
-      # out at the relative path BEFORE npm install resolves the file: dep.
-      - uses: actions/checkout@v7
-        with:
-          repository: jverneuer/browsercore-dev
-          path: ../dev
-          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-node@v7
         with:
           node-version: 26
