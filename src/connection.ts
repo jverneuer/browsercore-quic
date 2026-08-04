@@ -145,6 +145,7 @@ export class QuicConnectionImpl implements QuicConnection {
         while (offset < payload.length) {
             const slice = payload.subarray(offset, offset + MAX_DATAGRAM_PAYLOAD) as Bytes;
             const packet = this.wrapPacket(slice);
+            // eslint-disable-next-line no-await-in-loop — datagrams must be sent in order; coalescing handled by kernel
             await this.transport.send(packet, this.peer);
             offset += MAX_DATAGRAM_PAYLOAD;
         }
@@ -302,7 +303,9 @@ export class QuicConnectionImpl implements QuicConnection {
     private async readLoop(): Promise<void> {
         try {
             while (!this.closed) {
+                // eslint-disable-next-line no-await-in-loop — QUIC read loop: datagrams must be dispatched in arrival order
                 const { data } = await this.transport.recv();
+                // eslint-disable-next-line no-await-in-loop — QUIC read loop: each datagram must be processed before the next
                 await this.dispatchDatagram(data as Bytes);
                 // Drain any pending stream sends after handling each datagram.
                 this.drainSends();
