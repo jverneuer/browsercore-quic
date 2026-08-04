@@ -42,6 +42,11 @@ import {
     decodeFrame,
     readFrames,
     serializeFrame,
+    parsePacketHeader,
+    serializeShortHeader,
+    serializeLongHeader,
+    decodePacketNumber,
+    encodePacketNumber,
     createStreamManager,
     assertNever,
     concat,
@@ -99,6 +104,14 @@ describe("barrel public API", () => {
         expect(typeof readFrames).toBe("function");
         expect(typeof serializeFrame).toBe("function");
         expect(typeof createStreamManager).toBe("function");
+    });
+
+    it("re-exports packet header + packet-number helpers", () => {
+        expect(typeof parsePacketHeader).toBe("function");
+        expect(typeof serializeShortHeader).toBe("function");
+        expect(typeof serializeLongHeader).toBe("function");
+        expect(typeof decodePacketNumber).toBe("function");
+        expect(typeof encodePacketNumber).toBe("function");
     });
 
     it("re-exports byte helpers", () => {

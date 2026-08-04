@@ -70,6 +70,14 @@ export {
     prefixMask,
 } from "./frame/varint.js";
 export { decodeFrame, readFrames, serializeFrame } from "./frame/frame.js";
+export {
+    parsePacketHeader,
+    serializeShortHeader,
+    serializeLongHeader,
+    decodePacketNumber,
+    encodePacketNumber,
+} from "./packet/packet.js";
+export type { PacketHeader, LongHeader, ShortHeader } from "./packet/packet.js";
 export { createStreamManager } from "./stream/stream.js";
 export type { StreamManager } from "./stream/stream.js";
 
