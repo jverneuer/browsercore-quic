@@ -34,6 +34,7 @@
         "test": "vitest run"
     },
     "devDependencies": {
+        "@browsercore/dev": "file:../dev",
         "@types/node": "^26.1.2",
         "@vitest/coverage-v8": "^4.1.10",
         "typescript": "^7.0.0",

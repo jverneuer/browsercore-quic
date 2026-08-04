@@ -117,7 +117,7 @@ export class QuicConnectionImpl implements QuicConnection {
         this.manager.close(errorCode, reason);
         // Pack + flush the CONNECTION_CLOSE frame, then tear down.
         await this.flush();
-        await this._teardown({ kind: "client_close" });
+        await this.teardown({ kind: "client_close" });
     }
 
     // --- frame I/O -------------------------------------------------------------
@@ -142,9 +142,12 @@ export class QuicConnectionImpl implements QuicConnection {
         const frames = this.outboundFrames.splice(0);
         const payload = this.packFrames(frames);
         let offset = 0;
+        // Sequential: QUIC packet fragments must be sent in order; each datagram
+        // must land before the next is dispatched.
         while (offset < payload.length) {
             const slice = payload.subarray(offset, offset + MAX_DATAGRAM_PAYLOAD) as Bytes;
             const packet = this.wrapPacket(slice);
+            // eslint-disable-next-line no-await-in-loop
             await this.transport.send(packet, this.peer);
             offset += MAX_DATAGRAM_PAYLOAD;
         }
@@ -185,7 +188,7 @@ export class QuicConnectionImpl implements QuicConnection {
         }
         this.closing = true;
         this.manager.abortAll(new ConnectionClosedError(errorCode, reason));
-        await this._teardown({ kind: "remote_close" });
+        await this.teardown({ kind: "remote_close" });
     }
 
     /** Parse a single datagram into frames and dispatch them. */
@@ -216,7 +219,7 @@ export class QuicConnectionImpl implements QuicConnection {
         } catch (err) {
             // A parse error on one datagram is not necessarily fatal for the
             // connection, but without a protection layer to frame it we close.
-            this._handleFatal(err instanceof Error ? err : new Error(String(err)));
+            this.handleFatal(err instanceof Error ? err : new Error(String(err)));
         }
     }
 
@@ -302,14 +305,18 @@ export class QuicConnectionImpl implements QuicConnection {
     private async readLoop(): Promise<void> {
         try {
             while (!this.closed) {
+                // Sequential: each datagram must be received then dispatched in
+                // order before the next recv.
+                // eslint-disable-next-line no-await-in-loop
                 const { data } = await this.transport.recv();
+                // eslint-disable-next-line no-await-in-loop
                 await this.dispatchDatagram(data as Bytes);
                 // Drain any pending stream sends after handling each datagram.
                 this.drainSends();
             }
         } catch (err) {
             if (!this.closed) {
-                this._handleFatal(err instanceof Error ? err : new Error(String(err)));
+                this.handleFatal(err instanceof Error ? err : new Error(String(err)));
             }
         }
     }
@@ -326,17 +333,17 @@ export class QuicConnectionImpl implements QuicConnection {
     }
 
     /** Tear down the connection on a fatal transport / parse error. */
-    private _handleFatal(err: Error): void {
+    private handleFatal(err: Error): void {
         if (this.closed) {
             return;
         }
         this.closing = true;
         this.manager.abortAll(err);
-        void this._teardown({ kind: "error", error: err });
+        void this.teardown({ kind: "error", error: err });
     }
 
     /** Mark closed and release the transport. */
-    private async _teardown(reason: { readonly kind: "client_close" } | { readonly kind: "remote_close" } | { readonly kind: "error"; readonly error: Error }): Promise<void> {
+    private async teardown(reason: { readonly kind: "client_close" } | { readonly kind: "remote_close" } | { readonly kind: "error"; readonly error: Error }): Promise<void> {
         if (this.closed) {
             return;
         }
