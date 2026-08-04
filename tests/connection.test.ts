@@ -13,6 +13,8 @@ import {
     QuicFrameType,
     EMPTY_CONNECTION_ID,
     LongPacketType,
+    type PathChallengeFrame,
+    type PathResponseFrame,
     type QuicFrame,
     type QuicTransportParameters,
 } from "../src/types.js";
@@ -330,6 +332,155 @@ describe("read loop fatal error handling", () => {
         // The connection flushed a packet (carrying MAX_STREAM_DATA) to the peer.
         const flushed = await server.recv();
         expect(flushed.data.length).toBeGreaterThan(2);
+        await c.close(0n, "done");
+    });
+});
+
+describe("path validation (RFC 9000 §8.2.1, §19.17)", () => {
+    /**
+     * Read the next outbound short-header packet the connection sent and decode
+     * its first frame. The fake transport delivers the connection's sends to the
+     * peer's recv queue, so the server side "receives" what the connection sent.
+     */
+    async function readOutboundFrame(server: FakeDatagramTransport): Promise<QuicFrame> {
+        const { data } = await server.recv();
+        // Skip the short header (1 byte) + packet number (1 byte).
+        let consumed = false;
+        const read = (): Promise<Uint8Array | null> => {
+            if (consumed) {
+                return Promise.resolve(null);
+            }
+            consumed = true;
+            return Promise.resolve(data.subarray(2));
+        };
+        for await (const f of readFrames(read)) {
+            return f;
+        }
+        throw new Error("no frame in outbound datagram");
+    }
+
+    it("responds to a received PATH_CHALLENGE with a PATH_RESPONSE carrying the same 8 bytes", async () => {
+        const { conn, server } = makeConn();
+        const c = await conn;
+        const challenge = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+        server.send(makePacket({ type: QuicFrameType.PATH_CHALLENGE, data: challenge }), LOCAL_ADDR);
+        await tick();
+
+        const response = await readOutboundFrame(server);
+        expect(response.type).toBe(QuicFrameType.PATH_RESPONSE);
+        const pathResponse = response as PathResponseFrame;
+        expect(Array.from(pathResponse.data)).toEqual([...challenge]);
+        await c.close(0n, "done");
+    });
+
+    it("echoes the exact challenge bytes for an arbitrary 8-byte payload", async () => {
+        const { conn, server } = makeConn();
+        const c = await conn;
+        const challenge = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe]);
+        server.send(makePacket({ type: QuicFrameType.PATH_CHALLENGE, data: challenge }), LOCAL_ADDR);
+        await tick();
+
+        const response = await readOutboundFrame(server);
+        expect(response.type).toBe(QuicFrameType.PATH_RESPONSE);
+        expect(Array.from((response as PathResponseFrame).data)).toEqual([...challenge]);
+        await c.close(0n, "done");
+    });
+
+    it("sends a PATH_CHALLENGE frame to the peer and records it as pending", async () => {
+        const { conn, server } = makeConn();
+        const c = await conn;
+        const challenge = new Uint8Array([9, 8, 7, 6, 5, 4, 3, 2]);
+        c.sendPathChallenge(challenge);
+
+        // The peer receives a PATH_CHALLENGE frame carrying the challenge bytes.
+        const outbound = await readOutboundFrame(server);
+        expect(outbound.type).toBe(QuicFrameType.PATH_CHALLENGE);
+        expect(Array.from((outbound as PathChallengeFrame).data)).toEqual([...challenge]);
+
+        // The connection records the challenge as pending.
+        expect(c.hasPendingPathChallenge(challenge)).toBe(true);
+        await c.close(0n, "done");
+    });
+
+    it("validates a matching PATH_RESPONSE by clearing the pending challenge", async () => {
+        const { conn, server } = makeConn();
+        const c = await conn;
+        const challenge = new Uint8Array([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89]);
+        c.sendPathChallenge(challenge);
+        expect(c.hasPendingPathChallenge(challenge)).toBe(true);
+
+        // Drain the outbound PATH_CHALLENGE the connection sent.
+        await readOutboundFrame(server);
+
+        // Peer responds with a matching PATH_RESPONSE.
+        server.send(makePacket({ type: QuicFrameType.PATH_RESPONSE, data: challenge }), LOCAL_ADDR);
+        await tick();
+
+        // The challenge is consumed — the path is validated.
+        expect(c.hasPendingPathChallenge(challenge)).toBe(false);
+        await c.close(0n, "done");
+    });
+
+    it("tracks multiple concurrent pending challenges independently", async () => {
+        const { conn, server } = makeConn();
+        const c = await conn;
+        const a = new Uint8Array([1, 1, 1, 1, 1, 1, 1, 1]);
+        const b = new Uint8Array([2, 2, 2, 2, 2, 2, 2, 2]);
+        c.sendPathChallenge(a);
+        c.sendPathChallenge(b);
+        expect(c.hasPendingPathChallenge(a)).toBe(true);
+        expect(c.hasPendingPathChallenge(b)).toBe(true);
+
+        // Drain both outbound PATH_CHALLENGEs.
+        await readOutboundFrame(server);
+        await readOutboundFrame(server);
+
+        // Validating one does not clear the other.
+        server.send(makePacket({ type: QuicFrameType.PATH_RESPONSE, data: a }), LOCAL_ADDR);
+        await tick();
+        expect(c.hasPendingPathChallenge(a)).toBe(false);
+        expect(c.hasPendingPathChallenge(b)).toBe(true);
+        await c.close(0n, "done");
+    });
+
+    it("ignores a PATH_RESPONSE that matches no pending challenge", async () => {
+        const { conn, server } = makeConn();
+        const c = await conn;
+        const pending = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+        c.sendPathChallenge(pending);
+        expect(c.hasPendingPathChallenge(pending)).toBe(true);
+
+        // Peer sends a PATH_RESPONSE that does NOT match the pending challenge.
+        const spurious = new Uint8Array([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+        server.send(makePacket({ type: QuicFrameType.PATH_RESPONSE, data: spurious }), LOCAL_ADDR);
+        await tick();
+
+        // The pending challenge is untouched; connection stays open.
+        expect(c.hasPendingPathChallenge(pending)).toBe(true);
+        expect((await c.openBidirectionalStream()).id).toBe(0n);
+        await c.close(0n, "done");
+    });
+
+    it("rejects PATH_CHALLENGE data that is not exactly 8 bytes", async () => {
+        const c = await makeConn().conn;
+        expect(() => c.sendPathChallenge(new Uint8Array(7))).toThrow(/8 bytes/);
+        expect(() => c.sendPathChallenge(new Uint8Array(9))).toThrow(/8 bytes/);
+        expect(() => c.sendPathChallenge(new Uint8Array(0))).toThrow(/8 bytes/);
+        await c.close(0n, "done");
+    });
+
+    it("does not mutate the caller's challenge buffer", async () => {
+        const { conn, server } = makeConn();
+        const c = await conn;
+        const challenge = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80]);
+        const snapshot = challenge.slice();
+        c.sendPathChallenge(challenge);
+
+        // The caller's buffer is untouched.
+        expect(Array.from(challenge)).toEqual([...snapshot]);
+        // The peer received the same bytes we intended to send.
+        const outbound = await readOutboundFrame(server);
+        expect(Array.from((outbound as PathChallengeFrame).data)).toEqual([...snapshot]);
         await c.close(0n, "done");
     });
 });
