@@ -505,3 +505,200 @@ describe("EventEmitter surface", () => {
         expect(seen).toEqual([5n, 5n]);
     });
 });
+
+describe("stream state transitions", () => {
+    it("transitions to half_closed_local after a flushed FIN", () => {
+        const { manager } = makeManager();
+        const s = manager.openStream(true);
+        void s.write(new Uint8Array([1, 2]));
+        void s.close();
+        // Draining sends commits the FIN → transitionOnLocalFin → half_closed_local.
+        manager.flushSends(1200, () => {});
+        // A write on a half_closed_local stream must reject.
+        return expect(s.write(new Uint8Array([3]))).rejects.toBeInstanceOf(ResetStreamError);
+    });
+
+    it("transitions to half_closed_remote once the peer FIN is delivered", async () => {
+        const { manager } = makeManager();
+        // Server-initiated bidi stream id = 1, FIN at offset 0 with one byte.
+        manager.dispatch(streamFrame(1n, [7], 0n, true));
+        const stream = await manager.acceptStream(true);
+        // The byte arrives, then the FIN delivers EOF on the next read().
+        expect(Array.from(await stream.read())).toEqual([7]);
+        expect((await stream.read()).length).toBe(0);
+        // half_closed_remote: the local side can still write, so it must resolve.
+        await expect(stream.write(new Uint8Array([1]))).resolves.toBeUndefined();
+    });
+
+    it("reaches closed when the local side FINs and then the peer FINs", async () => {
+        const { manager } = makeManager();
+        // Peer opens stream 1; local side writes, closes, and flushes the FIN.
+        manager.dispatch(streamFrame(1n, [1], 0n));
+        const stream = await manager.acceptStream(true);
+        await stream.read(); // drain the byte
+        void stream.write(new Uint8Array([9]));
+        void stream.close();
+        manager.flushSends(1200, () => {}); // local FIN → half_closed_local
+        // Now the peer FINs: half_closed_local + remote FIN → closed.
+        manager.dispatch(streamFrame(1n, [2], 1n, true));
+        // A closed stream must reject writes with ResetStreamError.
+        await expect(stream.write(new Uint8Array([3]))).rejects.toBeInstanceOf(ResetStreamError);
+    });
+
+    it("reaches closed when the peer FINs and then the local side FINs", async () => {
+        const { manager } = makeManager();
+        // Peer opens stream 1 and FINs immediately → half_closed_remote.
+        manager.dispatch(streamFrame(1n, [1], 0n, true));
+        const stream = await manager.acceptStream(true);
+        await stream.read(); // the byte
+        expect((await stream.read()).length).toBe(0); // EOF
+        // Local side writes (still allowed) and FINs → half_closed_remote + local FIN → closed.
+        void stream.write(new Uint8Array([9]));
+        void stream.close();
+        manager.flushSends(1200, () => {});
+        await expect(stream.write(new Uint8Array([3]))).rejects.toBeInstanceOf(ResetStreamError);
+    });
+
+    it("rejects writes on a stream the peer reset", () => {
+        const { manager } = makeManager();
+        manager.dispatch(streamFrame(1n, [1]));
+        // No accept — reset the stream directly.
+        manager.dispatch({
+            type: QuicFrameType.RESET_STREAM,
+            streamId: 1n,
+            errorCode: 0x01n,
+            finalSize: 1n,
+        });
+        // After reset the stream is closed; a fresh write on a closed stream rejects.
+        const s = manager.openStream(true);
+        void s.write(new Uint8Array([1]));
+        void s.close();
+        manager.flushSends(1200, () => {});
+        return expect(s.write(new Uint8Array([2]))).rejects.toBeInstanceOf(ResetStreamError);
+    });
+});
+
+describe("reassembly edge cases", () => {
+    it("drops a frame that lies entirely below recvOffset", async () => {
+        const { manager } = makeManager();
+        manager.dispatch(streamFrame(1n, [1, 2, 3, 4], 0n));
+        // Fully-below retransmit: end (2) <= recvOffset (4).
+        manager.dispatch(streamFrame(1n, [1, 2], 0n));
+        const stream = await manager.acceptStream(true);
+        expect(Array.from(await stream.read())).toEqual([1, 2, 3, 4]);
+    });
+
+    it("leaves a gap in the reassembly buffer when a frame arrives out of order", async () => {
+        const { manager } = makeManager();
+        // Arrives first but starts past offset 0 — buffered, recvOffset stays 0.
+        manager.dispatch(streamFrame(1n, [5, 6], 4n));
+        const stream = await manager.acceptStream(true);
+        // No contiguous data yet: a read() blocks.
+        const pending = stream.read();
+        // It must not have resolved to the out-of-order chunk.
+        await expect(Promise.race([pending, Promise.resolve("pending")])).resolves.toBe("pending");
+        // Now bridge the gap.
+        manager.dispatch(streamFrame(1n, [1, 2, 3, 4], 0n));
+        expect(Array.from(await pending)).toEqual([1, 2, 3, 4]);
+        expect(Array.from(await stream.read())).toEqual([5, 6]);
+    });
+
+    it("buffers delivered bytes when no reader is waiting", async () => {
+        const { manager } = makeManager();
+        manager.dispatch(streamFrame(1n, [1, 2, 3], 0n));
+        const stream = await manager.acceptStream(true);
+        // Give the manager time to deliver into the read buffer.
+        await Promise.resolve();
+        await Promise.resolve();
+        // No read() was outstanding, so the bytes were buffered and read() returns them.
+        expect(Array.from(await stream.read())).toEqual([1, 2, 3]);
+    });
+});
+
+describe("send-path edge cases", () => {
+    it("emits DATA_BLOCKED when the connection window is exhausted", () => {
+        // The connection send window starts at 1 MiB and can only grow (a peer
+        // MAX_DATA is what raises it), so DATA_BLOCKED is only reachable once
+        // the app has sent a full 1 MiB. Give the per-stream window enough room
+        // to send it all on one stream and set the flush budget to exactly 1 MiB
+        // so the budget is exhausted in the same pass.
+        const MiB = 1024 * 1024;
+        const { manager } = makeManager({}, { initialMaxStreamDataBidiRemote: BigInt(MiB) });
+        const s = manager.openStream(true);
+        void s.write(new Uint8Array(MiB).fill(0x22));
+        const emitted: QuicFrame[] = [];
+        manager.flushSends(MiB, (f) => emitted.push(f));
+        const types = emitted.map((f) => f.type);
+        expect(types).toContain(QuicFrameType.STREAM);
+        expect(types).toContain(QuicFrameType.DATA_BLOCKED);
+    });
+
+    it("clips the STREAM payload to the remaining budget", () => {
+        const { manager } = makeManager();
+        const s = manager.openStream(true);
+        void s.write(new Uint8Array(20).fill(0x11));
+        const emitted: QuicFrame[] = [];
+        manager.flushSends(7, (f) => emitted.push(f));
+        const sf = emitted.find((f) => f.type === QuicFrameType.STREAM) as
+            | { data: Uint8Array }
+            | undefined;
+        expect(sf?.data.length).toBe(7);
+        // The remaining 13 bytes are still pending.
+        expect(manager.hasPendingSends).toBe(true);
+    });
+
+    it("flushes a FIN-only STREAM frame when the queue is empty but FIN is pending", () => {
+        const { manager } = makeManager();
+        const s = manager.openStream(true);
+        // close() without any write: sendFinPending is true, queue empty.
+        void s.close();
+        expect(manager.hasPendingSends).toBe(true);
+        const emitted: QuicFrame[] = [];
+        manager.flushSends(1200, (f) => emitted.push(f));
+        const sf = emitted.find((f) => f.type === QuicFrameType.STREAM) as
+            | { data: Uint8Array; fin: boolean }
+            | undefined;
+        expect(sf).toBeDefined();
+        expect(sf?.fin).toBe(true);
+        expect(sf?.data.length).toBe(0);
+    });
+});
+
+describe("dispatch no-ops and closing guards", () => {
+    it("ignores MAX_STREAM_DATA for an unknown stream", () => {
+        const { manager } = makeManager();
+        expect(() =>
+            manager.dispatch({
+                type: QuicFrameType.MAX_STREAM_DATA,
+                streamId: 1234n,
+                maximum: 1000n,
+            }),
+        ).not.toThrow();
+    });
+
+    it("rejects acceptStream once the manager is closing", async () => {
+        const { manager } = makeManager();
+        manager.close(0n, "bye");
+        await expect(manager.acceptStream(true)).rejects.toThrow(/closing/);
+        await expect(manager.acceptStream(false)).rejects.toThrow(/closing/);
+    });
+
+    it("rejects a read on a stream forced closed by abortAll", async () => {
+        const { manager } = makeManager();
+        // A locally-opened stream with nothing written: read() blocks.
+        const stream = manager.openStream(true);
+        const pending = stream.read();
+        // abortAll force-closes every stream, rejecting pending readers.
+        manager.abortAll(new Error("boom"));
+        await expect(pending).rejects.toThrow(/connection closed/);
+    });
+
+    it("close() is a no-op on an already-closed stream", async () => {
+        const { manager } = makeManager();
+        const stream = manager.openStream(true);
+        // Force-close the stream (as abortAll / a peer reset would).
+        manager.abortAll(new Error("down"));
+        // close() on a closed stream returns immediately without throwing.
+        await expect(stream.close()).resolves.toBeUndefined();
+    });
+});
