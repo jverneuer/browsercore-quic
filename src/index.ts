@@ -82,3 +82,11 @@ export { createStreamManager } from "./stream/stream.js";
 export type { StreamManager } from "./stream/stream.js";
 
 export { assertNever, concat, concatAll, hex } from "./utils.js";
+
+export {
+    decodeTransportParameters,
+    encodeTransportParameters,
+    fromWireParameters,
+    toWireParameters,
+} from "./transport-params.js";
+export type { TransportParameters } from "./transport-params.js";
