@@ -36,6 +36,13 @@ import { readFrames, serializeFrame } from "./frame/frame.js";
 import { ConnectionClosedError } from "./errors.js";
 import { createStreamManager, type StreamManager } from "./stream/stream.js";
 import { concatAll } from "./utils.js";
+import {
+    decodeTransportParameters,
+    encodeTransportParameters,
+    fromWireParameters,
+    toWireParameters,
+    type TransportParameters,
+} from "./transport-params.js";
 
 /** Byte type alias matching the `Uint8Array<ArrayBufferLike>` wire signatures. */
 type Bytes = Uint8Array;
@@ -58,6 +65,11 @@ export class QuicConnectionImpl implements QuicConnection {
     private readonly manager: StreamManager & EventEmitter;
     /** Our current destination connection id (the one we put on outbound packets). */
     private readonly dcid: ConnectionId;
+    /**
+     * Our transport parameters encoded for the wire. Produced at handshake
+     * time so a TLS layer can carry them to the peer in the QUIC extension.
+     */
+    private readonly encodedLocalParameters: Uint8Array;
 
     /** Set once the connection begins graceful shutdown. */
     private closing = false;
@@ -77,6 +89,12 @@ export class QuicConnectionImpl implements QuicConnection {
         this.peer = options.peer;
         this.manager = manager;
         this.dcid = dcid;
+        // Encode our transport parameters for the wire at construction. A real
+        // TLS handshake would carry these to the peer in the QUIC extension;
+        // here we surface them so the handshake layer can read them.
+        this.encodedLocalParameters = encodeTransportParameters(
+            toWireParameters(resolveLocalParameters(options)),
+        );
     }
 
     // --- public QuicConnection surface ------------------------------------------
@@ -129,6 +147,30 @@ export class QuicConnectionImpl implements QuicConnection {
      */
     public sendFrame(frame: QuicFrame): void {
         this.outboundFrames.push(frame);
+    }
+
+    /**
+     * Our transport parameters, encoded for the wire. A TLS handshake layer
+     * reads these once and carries them to the peer in the QUIC extension.
+     */
+    public getEncodedLocalParameters(): Uint8Array {
+        return this.encodedLocalParameters;
+    }
+
+    /**
+     * Ingest the peer's transport parameters from their wire encoding. Decodes
+     * them and feeds them to the stream manager so its send windows match what
+     * the peer advertised. Called by the handshake layer once the peer's
+     * parameters are available.
+     */
+    public receivePeerParameters(peerWireParameters: Uint8Array): void {
+        const wire = decodeTransportParameters(peerWireParameters);
+        this.manager.updatePeerParameters(fromWireParameters(wire));
+    }
+
+    /** Expose the wire-form peer parameters for inspection (tests, debugging). */
+    public toWireParameters(params: QuicTransportParameters): TransportParameters {
+        return toWireParameters(params);
     }
 
     /**

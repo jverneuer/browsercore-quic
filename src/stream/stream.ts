@@ -405,6 +405,12 @@ export interface StreamManager {
     /** Dispatch a decoded frame to the relevant stream / connection. */
     dispatch(frame: QuicFrame): void;
     /**
+     * Update the peer transport parameters (e.g. once they are decoded from
+     * the peer's handshake). Replaces the parameters the manager uses to size
+     * its send windows to the peer.
+     */
+    updatePeerParameters(params: QuicTransportParameters): void;
+    /**
      * Drain pending sends into STREAM frames, respecting flow control. Calls
      * `emit` for each frame that should be packed into an outbound packet.
      * `maxPayload` bounds the total bytes of STREAM data to emit this pass.
@@ -785,6 +791,9 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
         flushSends,
         abortAll,
         close,
+        updatePeerParameters: (params: QuicTransportParameters): void => {
+            deps.peerParameters = params;
+        },
         get hasPendingSends(): boolean {
             for (const s of streams.values()) {
                 if (s.hasPendingSend) {
