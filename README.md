@@ -2,7 +2,7 @@
 
 
 [![npm version](https://img.shields.io/npm/v/@browsercore/quic)](https://www.npmjs.com/package/@browsercore/quic)
-[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jverneuer/browsercore-quic/coverage/coverage/badge.json)](https://github.com/jverneuer/browsercore-quic/blob/main/COVERAGE.md)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jverneuer/browsercore-quic/main/.github/coverage-badge.json)](https://github.com/jverneuer/browsercore-quic/blob/main/COVERAGE.md)
 [![lint](https://img.shields.io/github/actions/workflow/status/jverneuer/browsercore-quic/ci.yml?label=lint)](https://github.com/jverneuer/browsercore-quic/actions/workflows/ci.yml)
 
 QUIC transport (RFC 9000) — packet headers, frames, packet protection, streams,
