@@ -45,7 +45,8 @@
     },
     "dependencies": {
         "@browsercore/crypto": "0.2.1",
-        "@browsercore/tls": "0.3.1"
+        "@browsercore/tls": "0.3.1",
+        "ts-log": "^3.0.2"
     },
     "engines": {
         "node": ">=26.0.0"
