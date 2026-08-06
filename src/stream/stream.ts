@@ -35,8 +35,8 @@ import {
     type StreamState,
     type StreamCloseReason,
 } from "../types.js";
-import { ResetStreamError, StopSendingError } from "../errors.js";
-import { concat } from "../utils.js";
+import { ConnectionClosingError, ResetStreamError, StopSendingError } from "../errors.js";
+import { assertNever, concat } from "../utils.js";
 
 /** Byte type alias matching the `Uint8Array<ArrayBufferLike>` wire signatures. */
 type Bytes = Uint8Array;
@@ -384,8 +384,8 @@ class ManagedStream implements QuicStream {
     /** Force-close (connection teardown). */
     public forceClose(reason: StreamCloseReason): void {
         this.state = { state: "closed", reason };
-        this.rejectReaders(new Error("connection closed"));
-        this.rejectWriters(new Error("connection closed"));
+        this.rejectReaders(new ConnectionClosingError("connection closed"));
+        this.rejectWriters(new ConnectionClosingError("connection closed"));
     }
 
     /** The offset up to which we have sent (for STREAM frame offset + final size). */
@@ -510,7 +510,7 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
 
     function openStream(bidirectional: boolean): QuicStream {
         if (closing || closed) {
-            throw new Error("connection is closing");
+            throw new ConnectionClosingError();
         }
         const id = bidirectional ? nextBidi : nextUni;
         if (bidirectional) {
@@ -525,7 +525,7 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
 
     function acceptStream(bidirectional: boolean): Promise<QuicStream> {
         if (closing || closed) {
-            return Promise.reject(new Error("connection is closing"));
+            return Promise.reject(new ConnectionClosingError());
         }
         // Already have an incoming stream of this type waiting?
         for (const stream of streams.values()) {
@@ -667,6 +667,10 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager & Ev
                 // handshake layer concern — informational / relay only. A full
                 // implementation would pace. We surface nothing here.
                 break;
+            default:
+                // Every QuicFrame variant is handled above; this is only reachable
+                // if a new frame type is added without a handler.
+                assertNever(frame);
         }
     }
 

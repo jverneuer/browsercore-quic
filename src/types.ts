@@ -1,10 +1,17 @@
+import type {
+    DatagramTransport,
+    UdpAddress,
+    DatagramCloseReason,
+    RandomSource,
+} from "@browsercore/transport";
+
 /**
  * Domain types for @browsercore/quic.
  *
  * QUIC transport (RFC 9000) over a datagram (UDP) transport. This package owns
  * NO knowledge of HTTP/3, TLS handshake semantics, or sockets — it composes
- * exclusively over an injected {@link DatagramTransport} and
- * `@browsercore/crypto`. Higher layers (http3) compose through
+ * exclusively over an injected {@link DatagramTransport} and an injected
+ * CryptoProvider. Higher layers (http3) compose through
  * {@link QuicConnection}.
  *
  * Key concepts that shape these types:
@@ -19,52 +26,41 @@
  */
 
 // ---------------------------------------------------------------------------
-// Datagram transport abstraction (injected — this package implements none of it)
+// Clock abstraction (injected — makes time-dependent logic testable)
 // ---------------------------------------------------------------------------
 
-/** A resolved UDP socket address. */
-export interface UdpAddress {
-    readonly address: string;
-    readonly port: number;
-    readonly family: 4 | 6;
-}
-
-/** Why a datagram transport was closed. */
-export type DatagramCloseReason =
-    | { readonly kind: "client_close" }
-    | { readonly kind: "remote_close" }
-    | { readonly kind: "error"; readonly error: Error }
-    | { readonly kind: "timeout"; readonly afterMs: number };
-
 /**
- * The UDP datagram transport abstraction QUIC requires. Implemented by a
- * future UDP transport package (or a thin `node:dgram` adapter); injected here
- * so QUIC stays testable with a fake datagram transport and has no dependency
- * on socket internals.
+ * A source of the current time. Injected so connection id generation and any
+ * future time-driven logic can be tested deterministically. {@link systemClock}
+ * is the production default; tests supply a fake.
  */
-export interface DatagramTransport {
-    /** Opaque identifier for logging / correlation. */
-    readonly id: string;
-    /** Send a datagram to `address`. Resolves once handed to the kernel / buffered. */
-    send(data: Uint8Array, address: UdpAddress): Promise<void>;
-    /**
-     * Receive the next datagram. Resolves with the bytes and the sender's
-     * address, or rejects if the transport closes first.
-     */
-    recv(): Promise<{ readonly data: Uint8Array; readonly from: UdpAddress }>;
-    /** Close the transport. */
-    close(reason?: DatagramCloseReason): Promise<void>;
+export interface Clock {
+    /** Current time in milliseconds since the Unix epoch (same unit as Date.now()). */
+    now(): number;
 }
+
+/** Production clock backed by the global Date. */
+export const systemClock: Clock = { now: () => Date.now() };
+
+// Datagram transport types — imported from @browsercore/transport.
+// (Re-exported here so consumers can pull them from the quic package too.)
+export type { DatagramTransport, UdpAddress, DatagramCloseReason };
 
 // ---------------------------------------------------------------------------
 // Connection ids (RFC 9000 §5.1)
 // ---------------------------------------------------------------------------
 
 /** A QUIC connection id (0–255 bytes, typically 0/8/16). */
-export type ConnectionId = Uint8Array;
+export type ConnectionId = Uint8Array & { __brand: "ConnectionId" };
+
+/** Brand a byte array as a {@link ConnectionId}. Use at trust boundaries
+ * (e.g. when constructing an id from the wire or from scratch). */
+export function makeConnectionId(bytes: Uint8Array): ConnectionId {
+    return bytes as ConnectionId;
+}
 
 /** The zero-length connection id constant. */
-export const EMPTY_CONNECTION_ID = new Uint8Array(0);
+export const EMPTY_CONNECTION_ID = makeConnectionId(new Uint8Array(0));
 
 // ---------------------------------------------------------------------------
 // QUIC packet types (RFC 9000 §17)
@@ -417,6 +413,54 @@ export interface QuicConnection {
     hasPendingPathChallenge(data: Uint8Array): boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Logger abstraction (injected — this package never touches `console`)
+// ---------------------------------------------------------------------------
+
+/**
+ * The logging sink QUIC consumes. Injected so the package never writes to
+ * `console` directly — callers supply a real logger in dev/production and a
+ * no-op ({@link silentLogger}) by default so tests and embedded consumers
+ * stay silent unless they opt in via {@link QuicOptions.logger}.
+ *
+ * Method names track the calls they replace: `debug` replaces the log-level
+ * sink, `warn` replaces the warn-level sink, `error` replaces the error-level
+ * sink — so callers migrate by mapping each severity to its Logger method.
+ */
+export interface Logger {
+    /** Informational / trace output (log-level sink). */
+    readonly debug: (...args: unknown[]) => void;
+    /** Recoverable anomaly (warn-level sink). */
+    readonly warn: (...args: unknown[]) => void;
+    /** Hard failure (error-level sink). */
+    readonly error: (...args: unknown[]) => void;
+}
+
+/** No-op logger — the default. Every call is a silent drop. */
+export const silentLogger: Logger = {
+    debug: () => {},
+    warn: () => {},
+    error: () => {},
+};
+
+/** Development logger that delegates to the global console. */
+const sysConsole = console;
+export const devLogger: Logger = {
+    debug: (...args) => {
+        sysConsole.debug(...args);
+    },
+    warn: (...args) => {
+        sysConsole.warn(...args);
+    },
+    error: (...args) => {
+        sysConsole.error(...args);
+    },
+};
+
+// ---------------------------------------------------------------------------
+// QuicOptions
+// ---------------------------------------------------------------------------
+
 /** Options for {@link connectQuic}. */
 export interface QuicOptions {
     /** The underlying datagram (UDP) transport (already bound). */
@@ -433,6 +477,35 @@ export interface QuicOptions {
     readonly handshakeTimeoutMs?: number;
     /** Our transport parameters to advertise. */
     readonly transportParameters?: QuicTransportParameters;
+    /**
+     * Clock source for time-driven logic. Defaults to {@link systemClock}.
+     * Inject a fake in tests to make connection id generation deterministic.
+     */
+    readonly clock?: Clock;
+    /**
+     * Random source for connection-id generation and packet-number placeholders.
+     * Defaults to {@link nodeRandomSource}. Inject a deterministic source in
+     * tests to make wire bytes reproducible.
+     */
+    readonly random?: RandomSource;
+    /**
+     * Logging sink. Defaults to {@link silentLogger} so tests and embedded
+     * consumers stay silent unless they opt in.
+     */
+    readonly logger?: Logger;
+    /**
+     * Skip the TLS handshake and return an unprotected connection. The data
+     * plane is fully functional and testable with a fake datagram transport,
+     * but the connection is not wire-ready without a protection + handshake
+     * layer on top.
+     */
+    readonly skipHandshake?: boolean;
+    /**
+     * TLS ClientHello configuration for the handshake. Defaults to a modern
+     * TLS 1.3 profile (X25519 + secp256r1 key shares, AES-256/128-GCM +
+     * ChaCha20-Poly1305).
+     */
+    readonly tlsProfile?: ClientHelloConfigLike;
 }
 
 /** QUIC transport parameters the local endpoint advertises. */
@@ -446,4 +519,35 @@ export interface QuicTransportParameters {
     readonly initialMaxStreamsBidi?: bigint;
     readonly initialMaxStreamsUni?: bigint;
     readonly activeConnectionIdLimit?: number;
+}
+
+/**
+ * A subset of @browsercore/tls's `ClientHelloConfig` that QUIC needs to drive
+ * the handshake. We define a local interface (rather than importing the full
+ * TLS type) so that the QUIC package's public options surface stays decoupled
+ * from TLS internals — callers can pass a plain object literal.
+ */
+export interface ClientHelloConfigLike {
+    /** Ordered list of cipher suites the client advertises (most-preferred first). */
+    readonly cipherSuites: readonly string[];
+    /** Extension types in the exact order they must appear in the ClientHello. */
+    readonly extensionOrder: readonly number[];
+    /** Named groups for key share, ordered by preference. */
+    readonly keyShareGroups: readonly string[];
+    /** Signature algorithms the client accepts in CertificateVerify. */
+    readonly signatureAlgorithms: readonly string[];
+    /** Protocol versions the client advertises via supported_versions. */
+    readonly supportedVersions: readonly ProtocolVersionLike[];
+    /** Server Name Indication hostname (SNI). */
+    readonly serverName: string;
+    /** ALPN protocols the client wishes to negotiate. */
+    readonly alpnProtocols?: readonly string[];
+    /** Whether to inject GREASE (RFC 8701) sentinel values. */
+    readonly grease: boolean;
+}
+
+/** A protocol version as advertised via supported_versions. */
+export interface ProtocolVersionLike {
+    readonly name: "TLS 1.2" | "TLS 1.3";
+    readonly wire: number;
 }

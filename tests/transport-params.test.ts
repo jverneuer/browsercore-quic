@@ -16,7 +16,7 @@ import {
     toWireParameters,
     type TransportParameters,
 } from "../src/transport-params.js";
-import { TransportParameter, type QuicTransportParameters } from "../src/types.js";
+import { TransportParameter, makeConnectionId, type QuicTransportParameters } from "../src/types.js";
 import { decodeVarint, encodeVarint } from "../src/frame/varint.js";
 import { concatAll } from "../src/utils.js";
 import { QuicConnectionImpl } from "../src/connection.js";
@@ -63,12 +63,12 @@ function makeConnection(params: QuicTransportParameters = {}): QuicConnectionImp
             transport: fakeTransport,
             peer: fakePeer,
             serverName: "localhost",
-            initialDcid: new Uint8Array([1, 2, 3]),
-            initialScid: new Uint8Array([4, 5, 6]),
+            initialDcid: makeConnectionId(new Uint8Array([1, 2, 3])),
+            initialScid: makeConnectionId(new Uint8Array([4, 5, 6])),
             transportParameters: params,
         },
         manager,
-        new Uint8Array([1, 2, 3]),
+        makeConnectionId(new Uint8Array([1, 2, 3])),
     );
 }
 
