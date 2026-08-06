@@ -19,7 +19,7 @@
  *     a connection that moves frames over the transport directly.
  */
 
-
+import { EventEmitter } from "node:events";
 import {
     QuicFrameType,
     firstStreamId,
@@ -28,7 +28,6 @@ import {
     streamIdIsBidirectional,
     streamIdIsClientInitiated,
     type MaxStreamsFrame,
-    type QuicSignalSink,
     type QuicFrame,
     type QuicStream,
     type QuicTransportParameters,
@@ -431,8 +430,6 @@ export interface StreamManager {
 export interface StreamManagerDeps {
     /** Send a frame to be packed into an outbound packet. */
     sendFrame: (frame: QuicFrame) => void;
-    /** Signal sink for connection-level events (replaces node:events coupling). */
-    signals: QuicSignalSink;
     /** Local transport parameters to advertise. */
     localParameters: QuicTransportParameters;
     /** Peer transport parameters (for their receive windows). */
@@ -440,12 +437,18 @@ export interface StreamManagerDeps {
 }
 
 /**
- * Create a stream manager. `deps.sendFrame` is the callback for frame I/O and
- * `deps.signals` is the sink for connection-level signals — the manager never
- * touches the transport or node:events directly.
+ * Create a stream manager. `deps.sendFrame` is the callback for frame I/O — the
+ * manager never touches the transport directly.
+ *
+ * The returned object is also an {@link EventEmitter} emitting connection-level
+ * signals the connection layer reacts to:
+ *   - "incomingStream", stream   — a peer-initiated stream the app can accept
+ *   - "connectionClose", {errorCode, reason}  — peer sent CONNECTION_CLOSE
+ *   - "maxData", maximum          — peer grew our connection send window
  */
-export function createStreamManager(deps: StreamManagerDeps): StreamManager {
+export function createStreamManager(deps: StreamManagerDeps): StreamManager & EventEmitter {
     const streams = new Map<StreamId, ManagedStream>();
+    const emitter = new EventEmitter();
 
     // Next locally-initiated stream ids, per type (RFC 9000 §2.1).
     let nextBidi = firstStreamId(true, true); // client-initiated bidirectional = 0
@@ -558,7 +561,7 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager {
                 waiter.resolve(stream);
             }
         } else {
-            deps.signals.onIncomingStream(stream);
+            emitter.emit("incomingStream", stream);
         }
         return stream;
     }
@@ -718,7 +721,7 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager {
             return;
         }
         connectionMaxData = frame.maximum;
-        deps.signals.onMaxData(frame.maximum);
+        emitter.emit("maxData", frame.maximum);
     }
 
     function handleMaxStreamData(
@@ -753,7 +756,7 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager {
         >,
     ): void {
         closing = true;
-        deps.signals.onConnectionClose(frame.errorCode, frame.reason);
+        emitter.emit("connectionClose", { errorCode: frame.errorCode, reason: frame.reason });
     }
 
     // --- teardown --------------------------------------------------------------
@@ -806,7 +809,20 @@ export function createStreamManager(deps: StreamManagerDeps): StreamManager {
         get localParameters(): QuicTransportParameters {
             return localParameters;
         },
+        // Mirror EventEmitter's core methods onto the manager so the returned
+        // object satisfies the `StreamManager & EventEmitter` intersection type
+        // and callers can subscribe through a single handle.
+        on: (event: string | symbol, listener: (...args: unknown[]) => void) =>
+            emitter.on(event, listener),
+        once: (event: string | symbol, listener: (...args: unknown[]) => void) =>
+            emitter.once(event, listener),
+        off: (event: string | symbol, listener: (...args: unknown[]) => void) =>
+            emitter.off(event, listener),
+        removeListener: (event: string | symbol, listener: (...args: unknown[]) => void) =>
+            emitter.removeListener(event, listener),
+        removeAllListeners: (event?: string | symbol) => emitter.removeAllListeners(event),
+        emit: (event: string | symbol, ...args: unknown[]) => emitter.emit(event, ...args),
     };
 
-    return manager;
+    return manager as StreamManager & EventEmitter;
 }

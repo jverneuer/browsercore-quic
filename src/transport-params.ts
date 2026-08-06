@@ -17,7 +17,6 @@
 import { TransportParameter, type QuicTransportParameters } from "./types.js";
 import { decodeVarint, encodeVarint } from "./frame/varint.js";
 import { concatAll } from "./utils.js";
-import { TransportParameterError } from "./errors.js";
 
 /** Wire-friendly transport parameters: parameter id → raw value bytes. */
 export type TransportParameters = ReadonlyMap<number, Uint8Array>;
@@ -38,10 +37,6 @@ export function encodeTransportParameters(params: TransportParameters): Uint8Arr
  * Decode on-the-wire transport parameters. Unknown ids are preserved in the
  * returned map so a caller can inspect them; they are simply never converted
  * by {@link fromWireParameters}.
- *
- * Every parameter is validated at the decode boundary (Rule #12): the declared
- * length must not exceed the available bytes. A malformed parameter throws
- * {@link TransportParameterError} (Rule #16) — never a generic RangeError.
  */
 export function decodeTransportParameters(buf: Uint8Array): TransportParameters {
     const params = new Map<number, Uint8Array>();
@@ -53,9 +48,9 @@ export function decodeTransportParameters(buf: Uint8Array): TransportParameters 
         offset += length.length;
         const valueEnd = offset + Number(length.value);
         if (valueEnd > buf.length) {
-            throw new TransportParameterError(Number(id.value), {
-                message: `Transport parameter 0x${id.value.toString(16)}: value truncated (${Number(length.value)} bytes declared, ${buf.length - offset} available)`,
-            });
+            throw new RangeError(
+                `Transport parameter 0x${id.value.toString(16)}: value truncated (${Number(length.value)} bytes declared, ${buf.length - offset} available)`,
+            );
         }
         params.set(Number(id.value), buf.subarray(offset, valueEnd));
         offset = valueEnd;
