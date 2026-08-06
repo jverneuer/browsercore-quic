@@ -4,6 +4,7 @@ import type {
     DatagramCloseReason,
     RandomSource,
 } from "@browsercore/transport";
+import type { CryptoProvider } from "@browsercore/crypto";
 
 /**
  * Domain types for @browsercore/quic.
@@ -393,6 +394,16 @@ export interface QuicStream {
 export interface QuicConnection {
     /** Opaque identifier for logging / correlation. */
     readonly id: string;
+    /**
+     * Resolve when the QUIC handshake completes and the connection is
+     * protected. HTTP/3 SETTINGS exchange may only begin after this resolves —
+     * frames written before the handshake complete would travel over an
+     * unprotected connection.
+     *
+     * When `skipHandshake` is true in QuicOptions, this resolves immediately
+     * since no TLS handshake is performed.
+     */
+    handshake(): Promise<void>;
     /** Open a new bidirectional stream (request/response). */
     openBidirectionalStream(): Promise<QuicStream>;
     /** Accept the next incoming bidirectional stream from the peer. */
@@ -506,6 +517,13 @@ export interface QuicOptions {
      * ChaCha20-Poly1305).
      */
     readonly tlsProfile?: ClientHelloConfigLike;
+    /**
+     * Cryptographic provider for the handshake and packet protection.
+     * Injected so QUIC can be tested with a fake crypto provider and has no
+     * dependency on node:crypto. Defaults to the Node-backed provider from
+     * @browsercore/crypto.
+     */
+    readonly crypto?: CryptoProvider;
 }
 
 /** QUIC transport parameters the local endpoint advertises. */

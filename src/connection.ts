@@ -241,6 +241,22 @@ export class QuicConnectionImpl implements QuicConnection {
 
     // --- public QuicConnection surface ------------------------------------------
 
+    /**
+     * Resolve when the QUIC handshake completes and the connection is
+     * protected. HTTP/3 SETTINGS exchange may only begin after this resolves.
+     *
+     * When `skipHandshake` is true in QuicOptions, this resolves immediately
+     * since no TLS handshake is performed.
+     */
+    public async handshake(): Promise<void> {
+        // If the handshake has already completed, resolve immediately
+        if (this.handshakeResult !== undefined) {
+            return;
+        }
+        // Perform the TLS handshake
+        await this.performHandshake();
+    }
+
     public openBidirectionalStream(): Promise<QuicStream> {
         return Promise.resolve().then(() => {
             this.ensureOpen();
