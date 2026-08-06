@@ -18,6 +18,8 @@
  *     control. The 62-bit stream id's low 2 bits encode initiator + direction.
  */
 
+import type { CryptoProvider } from "@browsercore/crypto";
+
 // ---------------------------------------------------------------------------
 // Datagram transport abstraction (injected — this package implements none of it)
 // ---------------------------------------------------------------------------
@@ -397,6 +399,17 @@ export interface QuicStream {
 export interface QuicConnection {
     /** Opaque identifier for logging / correlation. */
     readonly id: string;
+    /**
+     * Resolve when the QUIC handshake completes and the connection is
+     * protected. HTTP/3 SETTINGS exchange may only begin after this resolves —
+     * frames written before the handshake complete would travel over an
+     * unprotected connection.
+     *
+     * Note: The current QUIC implementation does not include TLS handshake
+     * logic; this method resolves immediately for now. A full implementation
+     * would integrate with @browsercore/tls to perform the actual handshake.
+     */
+    handshake(): Promise<void>;
     /** Open a new bidirectional stream (request/response). */
     openBidirectionalStream(): Promise<QuicStream>;
     /** Accept the next incoming bidirectional stream from the peer. */
@@ -417,6 +430,90 @@ export interface QuicConnection {
     hasPendingPathChallenge(data: Uint8Array): boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Logger abstraction (injected — decouples protocol code from `console`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Logging abstraction for QUIC internals. Injected via {@link QuicOptions}
+ * so callers control sink + verbosity without the protocol layer depending on
+ * `console` directly — keeps the package testable and embeddable in non-Node
+ * hosts (browsers, workers) where `console` may not be the desired sink.
+ *
+ * All methods are synchronous and MUST NOT throw — logging failures must never
+ * disrupt protocol operation.
+ */
+export interface Logger {
+    /** Verbose diagnostics — disabled by default in production. */
+    debug(message: string, ...meta: readonly unknown[]): void;
+    /** Recoverable anomaly (e.g. peer SETTINGS violation we tolerated). */
+    warn(message: string, ...meta: readonly unknown[]): void;
+    /** Non-recoverable failure (e.g. GOAWAY received, handshake timeout). */
+    error(message: string, ...meta: readonly unknown[]): void;
+}
+
+/** A silent logger — drops every call. This is the default. */
+export const silentLogger: Logger = {
+    debug: () => {},
+    warn: () => {},
+    error: () => {},
+};
+
+/**
+ * A development logger — forwards to the platform `console`. Opt-in; the
+ * default is {@link silentLogger} so production callers must explicitly enable
+ * noise.
+ */
+export const devLogger: Logger = {
+    debug: (message, ...meta) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.debug(message, ...meta);
+    },
+    warn: (message, ...meta) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.warn(message, ...meta);
+    },
+    error: (message, ...meta) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.error(message, ...meta);
+    },
+};
+
+// ---------------------------------------------------------------------------
+// Clock abstraction (injected — decouples protocol code from wall-clock time)
+// ---------------------------------------------------------------------------
+
+/**
+ * Time-source abstraction for QUIC internals. Injected via {@link QuicOptions}
+ * so callers can substitute a deterministic clock in tests instead of relying on
+ * the wall clock (`Date.now()` / `setTimeout`). The default is {@link systemClock},
+ * backed by the platform primitives.
+ *
+ * `setTimeout` returns a disposer rather than an opaque handle: a timer and its
+ * cancellation are a single unit, so the handle never escapes into protocol code
+ * and a fake clock can back both with plain data structures — no platform cast.
+ */
+export interface Clock {
+    /** Milliseconds since epoch — mirrors `Date.now()`. */
+    now(): number;
+    /**
+     * Schedule `callback` after `delayMs`. Returns a disposer that cancels the
+     * pending timer when called — mirrors `setTimeout`/`clearTimeout` as one op.
+     */
+    setTimeout(callback: () => void, delayMs: number): () => void;
+}
+
+/** The platform-backed default clock — `Date.now()` + `setTimeout`. */
+export const systemClock: Clock = {
+    now: () => Date.now(),
+    setTimeout: (callback, delayMs) => {
+        const timer = setTimeout(callback, delayMs);
+        return () => {
+            clearTimeout(timer);
+        };
+    },
+};
+
 /** Options for {@link connectQuic}. */
 export interface QuicOptions {
     /** The underlying datagram (UDP) transport (already bound). */
@@ -433,6 +530,24 @@ export interface QuicOptions {
     readonly handshakeTimeoutMs?: number;
     /** Our transport parameters to advertise. */
     readonly transportParameters?: QuicTransportParameters;
+    /**
+     * Cryptographic provider for the handshake and packet protection.
+     * Injected so QUIC can be tested with a fake crypto provider and has no
+     * dependency on node:crypto. Defaults to the Node-backed provider from
+     * @browsercore/crypto.
+     */
+    readonly crypto?: CryptoProvider;
+    /**
+     * Logger for protocol diagnostics. Defaults to {@link silentLogger} — no
+     * output unless the caller opts in. Use {@link devLogger} to forward to
+     * `console`.
+     */
+    readonly logger?: Logger;
+    /**
+     * Time source for the connection. Defaults to {@link systemClock}. Inject a
+     * deterministic clock in tests to control time without real waits.
+     */
+    readonly clock?: Clock;
 }
 
 /** QUIC transport parameters the local endpoint advertises. */

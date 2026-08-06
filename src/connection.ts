@@ -30,6 +30,10 @@ import {
     type QuicStream,
     type QuicTransportParameters,
     type UdpAddress,
+    type Logger,
+    type Clock,
+    silentLogger,
+    systemClock,
 } from "./types.js";
 import { parsePacketHeader, serializeShortHeader, type PacketHeader } from "./packet/packet.js";
 import { readFrames, serializeFrame } from "./frame/frame.js";
@@ -43,6 +47,7 @@ import {
     toWireParameters,
     type TransportParameters,
 } from "./transport-params.js";
+import { crypto as defaultCryptoProvider, type CryptoProvider } from "@browsercore/crypto";
 
 /** Byte type alias matching the `Uint8Array<ArrayBufferLike>` wire signatures. */
 type Bytes = Uint8Array;
@@ -65,6 +70,18 @@ export class QuicConnectionImpl implements QuicConnection {
     private readonly manager: StreamManager & EventEmitter;
     /** Our current destination connection id (the one we put on outbound packets). */
     private readonly dcid: ConnectionId;
+    /**
+     * Cryptographic provider for the handshake and packet protection.
+     * Stored for future TLS handshake integration; currently unused.
+     */
+    private readonly crypto: CryptoProvider;
+    /** Logger for protocol diagnostics. */
+    private readonly logger: Logger;
+    /**
+     * Time source for the connection.
+     * Stored for future TLS handshake integration; currently unused.
+     */
+    private readonly clock: Clock;
     /**
      * Our transport parameters encoded for the wire. Produced at handshake
      * time so a TLS layer can carry them to the peer in the QUIC extension.
@@ -97,6 +114,11 @@ export class QuicConnectionImpl implements QuicConnection {
         this.peer = options.peer;
         this.manager = manager;
         this.dcid = dcid;
+        this.crypto = options.crypto ?? defaultCryptoProvider;
+        this.logger = options.logger ?? silentLogger;
+        this.clock = options.clock ?? systemClock;
+        // Log connection creation for debugging
+        this.logger.debug(`QUIC connection created: ${id} to ${options.peer.address}:${options.peer.port}`);
         // Encode our transport parameters for the wire at construction. A real
         // TLS handshake would carry these to the peer in the QUIC extension;
         // here we surface them so the handshake layer can read them.
@@ -106,6 +128,19 @@ export class QuicConnectionImpl implements QuicConnection {
     }
 
     // --- public QuicConnection surface ------------------------------------------
+
+    /**
+     * Resolve when the QUIC handshake completes. The current implementation
+     * does not include TLS handshake logic, so this resolves immediately.
+     * A full implementation would integrate with @browsercore/tls and use
+     * the injected crypto provider and clock.
+     */
+    public async handshake(): Promise<void> {
+        // TLS handshake not yet implemented; resolve immediately.
+        // When implemented, this would use this.crypto and this.clock.
+        void this.crypto;
+        void this.clock;
+    }
 
     public openBidirectionalStream(): Promise<QuicStream> {
         return Promise.resolve().then(() => {
@@ -501,7 +536,9 @@ function resolveLocalParameters(options: QuicOptions): QuicTransportParameters {
  * fake datagram transport.
  */
 export function connectQuic(options: QuicOptions): Promise<QuicConnection> {
-    const id = `quic_${Date.now().toString(36)}`;
+    // Use the injected clock for testability
+    const clock = options.clock ?? systemClock;
+    const id = `quic_${clock.now().toString(36)}`;
 
     // The stream manager is constructed before the connection, but its frames
     // must reach the connection's packetizer. We bridge the two with a mutable

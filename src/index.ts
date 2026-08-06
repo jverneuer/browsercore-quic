@@ -60,7 +60,11 @@ export {
     type StreamState,
     type StreamCloseReason,
     type UdpAddress,
+    type Logger,
+    type Clock,
 } from "./types.js";
+
+export { silentLogger, devLogger, systemClock } from "./types.js";
 
 export {
     decodeVarint,
