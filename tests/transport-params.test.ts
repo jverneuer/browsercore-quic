@@ -16,7 +16,12 @@ import {
     toWireParameters,
     type TransportParameters,
 } from "../src/transport-params.js";
-import { TransportParameter, makeConnectionId, type QuicTransportParameters } from "../src/types.js";
+import {
+    TransportParameter,
+    makeConnectionId,
+    silentLogger,
+    type QuicTransportParameters,
+} from "../src/types.js";
 import { decodeVarint, encodeVarint } from "../src/frame/varint.js";
 import { concatAll } from "../src/utils.js";
 import { QuicConnectionImpl } from "../src/connection.js";
