@@ -56,17 +56,6 @@ describe("barrel public API (index.ts)", () => {
         expect(typeof quic.systemClock).toBe("object");
     });
 
-    it("re-exports the logger singletons", () => {
-        expect(quic.devLogger).toBeDefined();
-        expect(quic.silentLogger).toBeDefined();
-        expect(typeof quic.devLogger.debug).toBe("function");
-        expect(typeof quic.devLogger.warn).toBe("function");
-        expect(typeof quic.devLogger.error).toBe("function");
-        expect(typeof quic.silentLogger.debug).toBe("function");
-        expect(typeof quic.silentLogger.warn).toBe("function");
-        expect(typeof quic.silentLogger.error).toBe("function");
-    });
-
     it("re-exports varint helpers from frame/varint.ts", () => {
         expect(typeof quic.decodeVarint).toBe("function");
         expect(typeof quic.encodeVarint).toBe("function");

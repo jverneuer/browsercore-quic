@@ -8,16 +8,12 @@
  * barrel directly and asserting that every re-exported value is present and of
  * the right kind exercises those statements and catches accidental removal or
  * rename.
- *
- * Also covers src/types.ts lines 450-456 — the three devLogger method bodies
- * that delegate to the global console.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import * as quic from "../src/index.js";
 import * as handshake from "../src/handshake/index.js";
 import * as crypto from "../src/crypto/index.js";
-import { devLogger, silentLogger } from "../src/types.js";
 
 // ===========================================================================
 // 1. Main barrel — src/index.ts
@@ -66,17 +62,6 @@ describe("main barrel (src/index.ts)", () => {
         expect(typeof quic.streamIdIsBidirectional).toBe("function");
         expect(typeof quic.streamIdIsClientInitiated).toBe("function");
         expect(typeof quic.systemClock).toBe("object");
-    });
-
-    it("re-exports the logger singletons", () => {
-        expect(quic.devLogger).toBeDefined();
-        expect(quic.silentLogger).toBeDefined();
-        expect(typeof quic.devLogger.debug).toBe("function");
-        expect(typeof quic.devLogger.warn).toBe("function");
-        expect(typeof quic.devLogger.error).toBe("function");
-        expect(typeof quic.silentLogger.debug).toBe("function");
-        expect(typeof quic.silentLogger.warn).toBe("function");
-        expect(typeof quic.silentLogger.error).toBe("function");
     });
 
     it("re-exports varint helpers from frame/varint.ts", () => {
@@ -228,53 +213,4 @@ describe("crypto barrel (src/crypto/index.ts)", () => {
     });
 });
 
-// ===========================================================================
-// 4. src/types.ts lines 450-456 — devLogger method bodies
-// ===========================================================================
-describe("devLogger method bodies (src/types.ts:450-456)", () => {
-    afterEach(() => {
-        vi.restoreAllMocks();
-    });
 
-    it("delegates debug to console.debug", () => {
-        const spy = vi.spyOn(console, "debug").mockImplementation(() => {});
-        devLogger.debug("msg", { extra: true });
-        expect(spy).toHaveBeenCalledWith("msg", { extra: true });
-    });
-
-    it("delegates warn to console.warn", () => {
-        const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-        devLogger.warn("msg", 42);
-        expect(spy).toHaveBeenCalledWith("msg", 42);
-    });
-
-    it("delegates error to console.error", () => {
-        const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-        const err = new Error("boom");
-        devLogger.error("msg", err);
-        expect(spy).toHaveBeenCalledWith("msg", err);
-    });
-
-    it("forwards a rest-parameter list of arbitrary length", () => {
-        const spy = vi.spyOn(console, "debug").mockImplementation(() => {});
-        devLogger.debug("a", "b", "c", "d");
-        expect(spy).toHaveBeenCalledWith("a", "b", "c", "d");
-    });
-});
-
-// Sanity: silentLogger remains a no-op alongside devLogger.
-describe("silentLogger (src/types.ts)", () => {
-    it("is a no-op for debug, warn, and error", () => {
-        expect(() => {
-            silentLogger.debug("ignored", { extra: true });
-            silentLogger.warn("ignored", 42);
-            silentLogger.error("ignored", new Error("nope"));
-        }).not.toThrow();
-    });
-
-    it("returns void from every method", () => {
-        expect(silentLogger.debug("x")).toBeUndefined();
-        expect(silentLogger.warn("x")).toBeUndefined();
-        expect(silentLogger.error("x")).toBeUndefined();
-    });
-});

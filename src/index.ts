@@ -58,7 +58,6 @@ export {
     type ConnectionId,
     type DatagramCloseReason,
     type DatagramTransport,
-    type Logger,
     type QuicConnection,
     type QuicOptions,
     type QuicStream,
@@ -70,8 +69,6 @@ export {
     type ClientHelloConfigLike,
     type ProtocolVersionLike,
 } from "./types.js";
-
-export { devLogger, silentLogger } from "./types.js";
 
 export {
     decodeVarint,
