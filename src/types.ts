@@ -444,6 +444,54 @@ export interface QuicSignalSink {
 
 
 // ---------------------------------------------------------------------------
+// Logger (injected — this package never touches `console`)
+// ---------------------------------------------------------------------------
+
+import { type Logger, dummyLogger } from "ts-log";
+
+/**
+ * The logging sink QUIC consumes. Injected so the package never writes to
+ * `console` directly — callers supply a real logger in dev/production and a
+ * no-op ({@link dummyLogger}) by default so tests and embedded consumers
+ * stay silent unless they opt in via {@link QuicOptions.logger}.
+ *
+ * Re-exported from ts-log for consistency across all browsercore packages.
+ */
+export type { Logger };
+export { dummyLogger };
+
+/** @deprecated Use {@link dummyLogger} instead. */
+export const silentLogger = dummyLogger;
+
+/**
+ * Development logger — forwards to the platform `console`. Opt-in; the
+ * default is {@link dummyLogger} so production callers must explicitly enable
+ * noise.
+ */
+export const devLogger: Logger = {
+    trace: (...args) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.trace(...args);
+    },
+    debug: (...args) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.debug(...args);
+    },
+    info: (...args) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.info(...args);
+    },
+    warn: (...args) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.warn(...args);
+    },
+    error: (...args) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.error(...args);
+    },
+};
+
+// ---------------------------------------------------------------------------
 // QuicOptions
 // ---------------------------------------------------------------------------
 
@@ -474,6 +522,11 @@ export interface QuicOptions {
      * tests to make wire bytes reproducible.
      */
     readonly random?: RandomSource;
+    /**
+     * Logging sink. Defaults to {@link silentLogger} so tests and embedded
+     * consumers stay silent unless they opt in.
+     */
+    readonly logger?: Logger;
     /**
      * Skip the TLS handshake and return an unprotected connection. The data
      * plane is fully functional and testable with a fake datagram transport,
