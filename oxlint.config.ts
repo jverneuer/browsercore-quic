@@ -1,30 +1,25 @@
-{
-    "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/crates/oxlint/configuration_schema.json",
-    "plugins": [
-        "typescript",
-        "unicorn",
-        "import",
-        "promise",
-        "node"
-    ],
-    "env": {
-        "node": true
+import { defineConfig } from "oxlint";
+
+export default defineConfig({
+    plugins: ["typescript", "unicorn", "import", "promise", "node"],
+    env: {
+        node: true,
     },
-    "categories": {
-        "correctness": "error",
-        "suspicious": "error",
-        "pedantic": "error",
-        "perf": "warn",
-        "style": "off"
+    categories: {
+        correctness: "error",
+        suspicious: "error",
+        pedantic: "error",
+        perf: "warn",
+        style: "off",
     },
-    "rules": {
+    rules: {
         "no-console": "warn",
         "no-debugger": "error",
-        "eqeqeq": "error",
+        eqeqeq: "error",
         "no-var": "error",
         "prefer-const": "error",
         "object-shorthand": "error",
-        "curly": "error",
+        curly: "error",
         "no-duplicate-imports": "error",
         "no-useless-constructor": "error",
         "no-unreachable": "error",
@@ -48,11 +43,11 @@
         "no-underscore-dangle": [
             "error",
             {
-                "allow": [
+                allow: [
                     "_handleFatal",
-                    "_teardown"
-                ]
-            }
+                    "_teardown",
+                ],
+            },
         ],
         "no-inline-comments": "off",
         "max-lines": "off",
@@ -66,12 +61,7 @@
         "typescript/no-unsafe-type-assertion": "off",
         "typescript/no-unnecessary-type-assertion": "off",
         "max-classes-per-file": "off",
-        "prefer-readonly-parameter-types": "off"
+        "prefer-readonly-parameter-types": "off",
     },
-    "ignorePatterns": [
-        "dist",
-        "coverage",
-        "node_modules",
-        "*.config.js"
-    ]
-}
+    ignorePatterns: ["dist", "coverage", "node_modules", "*.config.js"],
+});
