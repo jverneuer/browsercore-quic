@@ -58,7 +58,6 @@ export {
     type ConnectionId,
     type DatagramCloseReason,
     type DatagramTransport,
-    type Logger,
     type QuicConnection,
     type QuicOptions,
     type QuicStream,
@@ -71,7 +70,12 @@ export {
     type ProtocolVersionLike,
 } from "./types.js";
 
-export { devLogger, silentLogger } from "./types.js";
+// Re-export Logger from ts-log for consistency across all browsercore packages
+export { type Logger, dummyLogger } from "ts-log";
+/** @deprecated Use {@link dummyLogger} instead. */
+export { dummyLogger as silentLogger } from "ts-log";
+// Export devLogger for development use
+export { devLogger } from "./types.js";
 
 export {
     decodeVarint,

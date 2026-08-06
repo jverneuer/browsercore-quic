@@ -444,46 +444,50 @@ export interface QuicSignalSink {
 
 
 // ---------------------------------------------------------------------------
-// Logger abstraction (injected — this package never touches `console`)
+// Logger (injected — this package never touches `console`)
 // ---------------------------------------------------------------------------
+
+import { type Logger, dummyLogger } from "ts-log";
 
 /**
  * The logging sink QUIC consumes. Injected so the package never writes to
  * `console` directly — callers supply a real logger in dev/production and a
- * no-op ({@link silentLogger}) by default so tests and embedded consumers
+ * no-op ({@link dummyLogger}) by default so tests and embedded consumers
  * stay silent unless they opt in via {@link QuicOptions.logger}.
  *
- * Method names track the calls they replace: `debug` replaces the log-level
- * sink, `warn` replaces the warn-level sink, `error` replaces the error-level
- * sink — so callers migrate by mapping each severity to its Logger method.
+ * Re-exported from ts-log for consistency across all browsercore packages.
  */
-export interface Logger {
-    /** Informational / trace output (log-level sink). */
-    readonly debug: (...args: unknown[]) => void;
-    /** Recoverable anomaly (warn-level sink). */
-    readonly warn: (...args: unknown[]) => void;
-    /** Hard failure (error-level sink). */
-    readonly error: (...args: unknown[]) => void;
-}
+export type { Logger };
+export { dummyLogger };
 
-/** No-op logger — the default. Every call is a silent drop. */
-export const silentLogger: Logger = {
-    debug: () => {},
-    warn: () => {},
-    error: () => {},
-};
+/** @deprecated Use {@link dummyLogger} instead. */
+export const silentLogger = dummyLogger;
 
-/** Development logger that delegates to the global console. */
-const sysConsole = console;
+/**
+ * Development logger — forwards to the platform `console`. Opt-in; the
+ * default is {@link dummyLogger} so production callers must explicitly enable
+ * noise.
+ */
 export const devLogger: Logger = {
+    trace: (...args) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.trace(...args);
+    },
     debug: (...args) => {
-        sysConsole.debug(...args);
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.debug(...args);
+    },
+    info: (...args) => {
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.info(...args);
     },
     warn: (...args) => {
-        sysConsole.warn(...args);
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.warn(...args);
     },
     error: (...args) => {
-        sysConsole.error(...args);
+        // oxlint-disable-next-line no-console -- devLogger IS the sanctioned console fallback
+        console.error(...args);
     },
 };
 
