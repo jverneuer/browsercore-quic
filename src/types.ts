@@ -19,6 +19,50 @@
  */
 
 // ---------------------------------------------------------------------------
+// Logger abstraction (injected — this package never touches `console`)
+// ---------------------------------------------------------------------------
+
+/**
+ * The logging sink QUIC consumes. Injected so the package never writes to
+ * `console` directly — callers supply a real logger in dev/production and a
+ * no-op ({@link silentLogger}) by default so tests and embedded consumers
+ * stay silent unless they opt in via {@link QuicOptions.logger}.
+ *
+ * Method names track the calls they replace: `debug` replaces the log-level
+ * sink, `warn` replaces the warn-level sink, `error` replaces the error-level
+ * sink — so callers migrate by mapping each severity to its Logger method.
+ */
+export interface Logger {
+    /** Informational / trace output (log-level sink). */
+    readonly debug: (...args: unknown[]) => void;
+    /** Recoverable anomaly (warn-level sink). */
+    readonly warn: (...args: unknown[]) => void;
+    /** Hard failure (error-level sink). */
+    readonly error: (...args: unknown[]) => void;
+}
+
+/** No-op logger — the default. Every call is a silent drop. */
+export const silentLogger: Logger = {
+    debug: () => {},
+    warn: () => {},
+    error: () => {},
+};
+
+/** Development logger that delegates to the global console. */
+const sysConsole = console;
+export const devLogger: Logger = {
+    debug: (...args) => {
+        sysConsole.debug(...args);
+    },
+    warn: (...args) => {
+        sysConsole.warn(...args);
+    },
+    error: (...args) => {
+        sysConsole.error(...args);
+    },
+};
+
+// ---------------------------------------------------------------------------
 // Datagram transport abstraction (injected — this package implements none of it)
 // ---------------------------------------------------------------------------
 
