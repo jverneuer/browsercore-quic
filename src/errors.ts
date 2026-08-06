@@ -142,8 +142,8 @@ export class TransportParameterError extends Error {
     public readonly parameter: number;
     public override readonly cause: Error | undefined;
 
-    constructor(parameter: number, options?: { cause?: Error }) {
-        super(`Transport parameter error: parameter=0x${parameter.toString(16)}`);
+    constructor(parameter: number, options?: { message?: string; cause?: Error }) {
+        super(options?.message ?? `Transport parameter error: parameter=0x${parameter.toString(16)}`);
         this.name = "TransportParameterError";
         this.parameter = parameter;
         this.cause = options?.cause;
