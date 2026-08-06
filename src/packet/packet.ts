@@ -64,8 +64,8 @@ export type PacketHeader = LongHeader | ShortHeader;
 export function serializeLongHeader(
     type: LongPacketTypeValue,
     version: number,
-    dcid: Uint8Array,
-    scid: Uint8Array,
+    dcid: ConnectionId,
+    scid: ConnectionId,
     packetNumberLength: number,
     extra: Uint8Array = new Uint8Array(0),
 ): Uint8Array {
@@ -85,7 +85,7 @@ export function serializeLongHeader(
 
 /** Serialize a short (1-RTT) header (without payload / packet number). */
 export function serializeShortHeader(
-    dcid: Uint8Array,
+    dcid: ConnectionId,
     packetNumberLength: number,
     spinBit: boolean,
     keyPhase: boolean,
