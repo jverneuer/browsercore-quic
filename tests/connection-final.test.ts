@@ -176,13 +176,6 @@ function makeLongPacket(
 // ---------------------------------------------------------------------------
 
 describe("public getters + private helpers (328, 344, 372, 524)", () => {
-    it("getLogger returns the injected logger", async () => {
-        const { conn } = makeConn();
-        const c = await conn;
-        expect(c.getLogger()).toBeDefined();
-        await c.close(0n, "done");
-    });
-
     it("toWireParameters converts transport parameters to wire form", async () => {
         const { conn } = makeConn();
         const c = await conn;

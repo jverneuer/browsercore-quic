@@ -31,11 +31,9 @@ import { nodeRandomSource, type RandomSource } from "@browsercore/transport";
 import {
     QuicFrameType,
     systemClock,
-    silentLogger,
     type Clock,
     type ClientHelloConfigLike,
     type ConnectionId,
-    type Logger,
     type QuicConnection,
     type QuicFrame,
     type QuicOptions,
@@ -125,8 +123,6 @@ export class QuicConnectionImpl implements QuicConnection {
     private readonly manager: StreamManager;
     /** Our current destination connection id (the one we put on outbound packets). */
     private readonly dcid: ConnectionId;
-    /** Logging sink for lifecycle + frame diagnostics. */
-    private readonly logger: Logger;
     /** Random source for connection ids and packet numbers. */
     private readonly random: RandomSource;
     /**
@@ -190,7 +186,6 @@ export class QuicConnectionImpl implements QuicConnection {
         options: QuicOptions,
         manager: StreamManager,
         dcid: ConnectionId,
-        logger: Logger,
         onPeerClose?: (handler: (errorCode: bigint, reason: string) => void) => void,
     ) {
         this.id = id;
@@ -198,7 +193,6 @@ export class QuicConnectionImpl implements QuicConnection {
         this.peer = options.peer;
         this.manager = manager;
         this.dcid = dcid;
-        this.logger = logger;
         // Let the caller (connectQuic) wire the peer-close signal handler.
         if (onPeerClose !== undefined) {
             onPeerClose((errorCode, reason) => {
@@ -323,15 +317,6 @@ export class QuicConnectionImpl implements QuicConnection {
      */
     public getEncodedLocalParameters(): Uint8Array {
         return this.encodedLocalParameters;
-    }
-
-    /**
-     * The logging sink for this connection. A TLS handshake layer or test
-     * harness reads this to attach diagnostics, or to swap in a capturing
-     * logger — the connection itself stays agnostic to where log lines go.
-     */
-    public getLogger(): Logger {
-        return this.logger;
     }
 
     /**
@@ -1080,7 +1065,6 @@ export async function connectQuic(options: QuicOptions): Promise<QuicConnection>
         options,
         manager,
         options.initialDcid,
-        options.logger ?? silentLogger,
         (handler) => {
             peerCloseHandler = handler;
         },
