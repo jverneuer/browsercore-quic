@@ -17,6 +17,18 @@ export class QuicError extends Error {
     }
 }
 
+/** The connection is closing or has closed — new streams/operations are not permitted. */
+export class ConnectionClosingError extends Error {
+    public readonly kind = "ConnectionClosingError" as const;
+    public override readonly cause: Error | undefined;
+
+    constructor(message = "connection is closing", options?: { cause?: Error }) {
+        super(message, options);
+        this.name = "ConnectionClosingError";
+        this.cause = options?.cause;
+    }
+}
+
 /** The peer closed the connection with a CONNECTION_CLOSE frame. */
 export class ConnectionClosedError extends Error {
     public readonly kind = "ConnectionClosedError" as const;
@@ -148,6 +160,35 @@ export class HandshakeTimeoutError extends Error {
         super(`QUIC handshake not completed within ${timeoutMs}ms`);
         this.name = "HandshakeTimeoutError";
         this.timeoutMs = timeoutMs;
+        this.cause = options?.cause;
+    }
+}
+
+/** The QUIC/TLS handshake failed — wraps the underlying @browsercore/tls error. */
+export class TlsHandshakeError extends Error {
+    public readonly kind = "TlsHandshakeError" as const;
+    public readonly phase: string;
+    public override readonly cause: Error | undefined;
+
+    constructor(phase: string, options?: { cause?: Error }) {
+        const cause = options?.cause;
+        super(cause ? `QUIC TLS handshake failed during ${phase}: ${cause.message}` : `QUIC TLS handshake failed during ${phase}`);
+        this.name = "TlsHandshakeError";
+        this.phase = phase;
+        this.cause = options?.cause;
+    }
+}
+
+/** QUIC packet protection failed — AEAD authentication mismatch or corrupt input. */
+export class PacketProtectionError extends Error {
+    public readonly kind = "PacketProtectionError" as const;
+    public readonly operation: "encrypt" | "decrypt";
+    public override readonly cause: Error | undefined;
+
+    constructor(operation: "encrypt" | "decrypt", options?: { cause?: Error }) {
+        super(`QUIC packet ${operation} failed: authentication mismatch or corrupt input`);
+        this.name = "PacketProtectionError";
+        this.operation = operation;
         this.cause = options?.cause;
     }
 }

@@ -16,6 +16,7 @@ import {
     STREAM_OFF_BIT,
     STREAM_LEN_BIT,
     STREAM_FIN_BIT,
+    makeConnectionId,
     type QuicFrame,
     type QuicFrameTypeValue,
 } from "../types.js";
@@ -394,7 +395,7 @@ export async function decodeFrame(
             const sequenceNumber = await readVarint();
             const retirePriorTo = await readVarint();
             const length = await readVarint();
-            const connectionId = await readBytes(length);
+            const connectionId = makeConnectionId(await readBytes(length));
             const statelessResetToken = await readBytes(16n);
             return {
                 type: QuicFrameType.NEW_CONNECTION_ID,

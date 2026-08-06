@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import {
     ConnectionClosedError,
+    ConnectionClosingError,
     FlowControlError,
     FrameParseError,
     HandshakeTimeoutError,
@@ -45,6 +46,22 @@ describe("QuicError", () => {
         const err = new ConnectionClosedError(0x01n, "bad", { frameType: 0x1cn });
         expect(err.frameType).toBe(0x1cn);
         expect(err.message).toContain("errorCode=1");
+    });
+});
+
+describe("ConnectionClosingError", () => {
+    it("sets name + kind and carries the cause", () => {
+        const cause = new Error("underlying");
+        const err = new ConnectionClosingError("connection is closing", { cause });
+        expect(err).toBeInstanceOf(Error);
+        expect(err.name).toBe("ConnectionClosingError");
+        expect(err.kind).toBe("ConnectionClosingError");
+        expect(err.cause).toBe(cause);
+    });
+
+    it("uses a default message when none is given", () => {
+        const err = new ConnectionClosingError();
+        expect(err.message).toBe("connection is closing");
     });
 });
 
