@@ -3,7 +3,7 @@
  *
  * Targets every remaining uncovered line reported by `vitest --coverage`:
  *
- *   - Public getters/helpers: getLogger (328), toWireParameters (344),
+ *   - Public getters/helpers: toWireParameters (344),
  *     flush early-return (372), getProtectionSecrets undefined (524).
  *   - wrapPacketUnprotected short-header branch (512-514).
  *   - performHandshake + the connectQuic handshake path (537,538,541,551,552,

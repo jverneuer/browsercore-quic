@@ -19,7 +19,6 @@ import {
 import {
     TransportParameter,
     makeConnectionId,
-    silentLogger,
     type QuicTransportParameters,
 } from "../src/types.js";
 import { decodeVarint, encodeVarint } from "../src/frame/varint.js";
