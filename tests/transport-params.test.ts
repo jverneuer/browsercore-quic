@@ -16,7 +16,12 @@ import {
     toWireParameters,
     type TransportParameters,
 } from "../src/transport-params.js";
-import { TransportParameter, makeConnectionId, type QuicTransportParameters } from "../src/types.js";
+import {
+    TransportParameter,
+    makeConnectionId,
+    silentLogger,
+    type QuicTransportParameters,
+} from "../src/types.js";
 import { decodeVarint, encodeVarint } from "../src/frame/varint.js";
 import { concatAll } from "../src/utils.js";
 import { QuicConnectionImpl } from "../src/connection.js";
@@ -117,9 +122,11 @@ describe("encodeTransportParameters", () => {
 
 describe("decodeTransportParameters", () => {
     it("decodes a single parameter", () => {
-        const decoded = decodeTransportParameters(new Uint8Array([0x01, 0x02, 0xab, 0xcd]));
+        // id 0x01 (MAX_IDLE_TIMEOUT) carries a varint value → [0x02] decodes
+        // to the varint 2.
+        const decoded = decodeTransportParameters(new Uint8Array([0x01, 0x01, 0x02]));
         expect(decoded.size).toBe(1);
-        expect(decoded.get(0x01)).toEqual(new Uint8Array([0xab, 0xcd]));
+        expect(decoded.get(0x01)).toEqual(new Uint8Array([0x02]));
     });
 
     it("decodes multiple parameters", () => {

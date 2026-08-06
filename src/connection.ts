@@ -111,28 +111,6 @@ const DEFAULT_TLS_PROFILE: ClientHelloConfig = {
 type PacketKeyPhase = "initial" | "handshake" | "application";
 
 /**
- * Events the stream manager emits for the connection layer to react to.
- * Typed here (rather than depending on `node:events`'s untyped `EventEmitter`)
- * so event payloads are known at the subscribe site.
- */
-export interface ConnectionEvents {
-    /** The peer sent a CONNECTION_CLOSE frame. */
-    readonly connectionClose: { readonly errorCode: bigint; readonly reason: string };
-    /** The peer grew our connection send window via MAX_DATA. */
-    readonly maxData: bigint;
-}
-
-/**
- * Minimal event-emitter surface the connection subscribes to. Defined here
- * (rather than depending on `node:events`) so the connection layer stays
- * decoupled from Node's EventEmitter — the stream manager satisfies this
- * interface structurally through its `on` method.
- */
-export interface ConnectionEventEmitter {
-    on<E extends keyof ConnectionEvents>(event: E, listener: (payload: ConnectionEvents[E]) => void): void;
-}
-
-/**
  * Concrete QUIC connection. The public surface matches the fixed
  * `QuicConnection` interface; internal state is kept on the instance.
  */
@@ -143,8 +121,8 @@ export class QuicConnectionImpl implements QuicConnection {
     private readonly transport: QuicOptions["transport"];
     /** The peer's UDP address. */
     private readonly peer: UdpAddress;
-    /** Stream manager (emits connection-level signals). */
-    private readonly manager: StreamManager & ConnectionEventEmitter;
+    /** Stream manager (signals connection-level events via QuicSignalSink). */
+    private readonly manager: StreamManager;
     /** Our current destination connection id (the one we put on outbound packets). */
     private readonly dcid: ConnectionId;
     /** Logging sink for lifecycle + frame diagnostics. */
@@ -202,12 +180,18 @@ export class QuicConnectionImpl implements QuicConnection {
     /** Buffered outbound frames waiting to be packed into the next packet. */
     private readonly outboundFrames: QuicFrame[] = [];
 
+    /**
+     * @param onPeerClose Register a handler for peer CONNECTION_CLOSE signals.
+     *                    The stream manager calls this through its signal sink;
+     *                    the connection supplies the handler at construction.
+     */
     public constructor(
         id: string,
         options: QuicOptions,
-        manager: StreamManager & ConnectionEventEmitter,
+        manager: StreamManager,
         dcid: ConnectionId,
         logger: Logger,
+        onPeerClose?: (handler: (errorCode: bigint, reason: string) => void) => void,
     ) {
         this.id = id;
         this.transport = options.transport;
@@ -215,6 +199,12 @@ export class QuicConnectionImpl implements QuicConnection {
         this.manager = manager;
         this.dcid = dcid;
         this.logger = logger;
+        // Let the caller (connectQuic) wire the peer-close signal handler.
+        if (onPeerClose !== undefined) {
+            onPeerClose((errorCode, reason) => {
+                void this.onPeerClose(errorCode, reason);
+            });
+        }
         this.random = options.random ?? nodeRandomSource;
         // The crypto provider is seeded with the same random source so the
         // QUIC key schedule (RFC 9001) derives bytes deterministically when a
@@ -576,13 +566,11 @@ export class QuicConnectionImpl implements QuicConnection {
     /**
      * Start the datagram read loop. Must be called once after construction.
      * Runs until the transport closes or the connection tears down.
+     *
+     * Peer CONNECTION_CLOSE signals are received through the stream manager's
+     * signal sink (wired at construction time), not via a direct subscription.
      */
     public startReadLoop(): void {
-        // React to connection-level signals from the stream manager.
-        this.manager.on("connectionClose", ({ errorCode, reason }: { errorCode: bigint; reason: string }) => {
-            void this.onPeerClose(errorCode, reason);
-        });
-
         void this.readLoop();
     }
 
@@ -1066,22 +1054,40 @@ export async function connectQuic(options: QuicOptions): Promise<QuicConnection>
     // must reach the connection's packetizer. We bridge the two with a mutable
     // router that we point at the connection once it exists.
     const frameRouter: { send: (frame: QuicFrame) => void } = { send: () => {} };
+    // The connection is not yet constructed when we build the manager, so we
+    // defer resolving the signal handler until after the connection exists.
+    let peerCloseHandler: ((errorCode: bigint, reason: string) => void) | undefined;
 
     const manager = createStreamManager({
         sendFrame: (frame) => {
             frameRouter.send(frame);
         },
+        signals: {
+            onIncomingStream: () => {},
+            onConnectionClose: (errorCode, reason) => {
+                if (peerCloseHandler !== undefined) {
+                    peerCloseHandler(errorCode, reason);
+                }
+            },
+            onMaxData: () => { /* sends drain in the read loop */ },
+        },
         localParameters: resolveLocalParameters(options),
         peerParameters: options.transportParameters ?? {},
     });
 
-    const conn = new QuicConnectionImpl(id, options, manager, options.initialDcid, options.logger ?? silentLogger);
+    const conn = new QuicConnectionImpl(
+        id,
+        options,
+        manager,
+        options.initialDcid,
+        options.logger ?? silentLogger,
+        (handler) => {
+            peerCloseHandler = handler;
+        },
+    );
     frameRouter.send = (frame) => {
         conn.sendFrame(frame);
     };
-
-    // A larger send window may have queued stream data — the read loop drains it.
-    manager.on("maxData", () => { /* sends drain in the read loop */ });
 
     // Start the read loop. The handshake (if any) runs concurrently so the
     // server's response is processed.

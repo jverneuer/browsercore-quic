@@ -36,6 +36,11 @@ function makeManager(
         sendFrame: (f) => {
             sent.push(f);
         },
+        signals: {
+            onIncomingStream: () => {},
+            onConnectionClose: () => {},
+            onMaxData: () => {},
+        },
         localParameters: local,
         peerParameters: peer,
     });

@@ -423,6 +423,25 @@ export interface QuicConnection {
     /** True if a PATH_CHALLENGE with the given data is awaiting a PATH_RESPONSE. */
     hasPendingPathChallenge(data: Uint8Array): boolean;
 }
+// ---------------------------------------------------------------------------
+// Signal sink (injected — keeps node:events out of the stream layer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Signal sink for connection-level events the stream manager emits. Injected
+ * via {@link StreamManagerDeps.signals} so the stream manager never imports
+ * `node:events` — the connection layer supplies a concrete implementation that
+ * reacts to these signals, and tests supply a recording sink.
+ */
+export interface QuicSignalSink {
+    /** A peer-initiated stream the app can accept. */
+    onIncomingStream(stream: QuicStream): void;
+    /** The peer sent a CONNECTION_CLOSE frame. */
+    onConnectionClose(errorCode: bigint, reason: string): void;
+    /** The peer grew our connection send window via MAX_DATA. */
+    onMaxData(maximum: bigint): void;
+}
+
 
 // ---------------------------------------------------------------------------
 // Logger abstraction (injected — this package never touches `console`)

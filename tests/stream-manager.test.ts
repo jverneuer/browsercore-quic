@@ -14,25 +14,50 @@ import { createStreamManager } from "../src/stream/stream.js";
 import {
     QuicFrameType,
     type QuicFrame,
+    type QuicSignalSink,
+    type QuicStream,
     type QuicTransportParameters,
 } from "../src/types.js";
 import { ResetStreamError, StopSendingError } from "../src/errors.js";
 
 type Manager = ReturnType<typeof createStreamManager>;
 
+/** Recorded signals from the stream manager — tests assert against these. */
+interface RecordedSignals {
+    incomingStreams: QuicStream[];
+    connectionCloses: Array<{ errorCode: bigint; reason: string }>;
+    maxData: bigint[];
+}
+
 function makeManager(
     local: QuicTransportParameters = {},
     peer: QuicTransportParameters = {},
-): { manager: Manager; sent: QuicFrame[] } {
+): { manager: Manager; sent: QuicFrame[]; signals: RecordedSignals } {
     const sent: QuicFrame[] = [];
+    const signals: RecordedSignals = {
+        incomingStreams: [],
+        connectionCloses: [],
+        maxData: [],
+    };
     const manager = createStreamManager({
         sendFrame: (f) => {
             sent.push(f);
         },
+        signals: {
+            onIncomingStream: (s) => {
+                signals.incomingStreams.push(s);
+            },
+            onConnectionClose: (errorCode, reason) => {
+                signals.connectionCloses.push({ errorCode, reason });
+            },
+            onMaxData: (m) => {
+                signals.maxData.push(m);
+            },
+        },
         localParameters: local,
         peerParameters: peer,
     });
-    return { manager, sent };
+    return { manager, sent, signals };
 }
 
 /** Build a STREAM frame targeting a server-initiated bidirectional stream id. */
@@ -95,23 +120,18 @@ describe("openStream / acceptStream lifecycle", () => {
         expect(stream.id).toBe(3n);
     });
 
-    it("emits incomingStream when no accept waiter is registered", () => {
-        const { manager } = makeManager();
-        const arrived: bigint[] = [];
-        manager.on("incomingStream", (s: { id: bigint }) => arrived.push(s.id));
+    it("signals incomingStream when no accept waiter is registered", () => {
+        const { manager, signals } = makeManager();
         manager.dispatch(streamFrame(1n, [1]));
-        expect(arrived).toEqual([1n]);
+        expect(signals.incomingStreams).toHaveLength(1);
+        expect(signals.incomingStreams[0]?.id).toBe(1n);
     });
 
     it("ignores STREAM frames for unknown client-initiated streams", () => {
-        const { manager } = makeManager();
-        let arrived = false;
-        manager.on("incomingStream", () => {
-            arrived = true;
-        });
+        const { manager, signals } = makeManager();
         // id 0 is client-initiated but no local stream exists there.
         manager.dispatch(streamFrame(0n, [1]));
-        expect(arrived).toBe(false);
+        expect(signals.incomingStreams).toHaveLength(0);
     });
 });
 
@@ -358,15 +378,13 @@ describe("peer control frames", () => {
 });
 
 describe("connection-level frame handling", () => {
-    it("MAX_DATA grows the connection window and emits maxData only on growth", () => {
-        const { manager } = makeManager();
-        const events: bigint[] = [];
-        manager.on("maxData", (m: bigint) => events.push(m));
+    it("MAX_DATA grows the connection window and signals maxData only on growth", () => {
+        const { manager, signals } = makeManager();
         manager.dispatch({ type: QuicFrameType.MAX_DATA, maximum: 5_000_000n });
-        expect(events).toEqual([5_000_000n]);
-        // A smaller value does not grow the window and must not emit.
+        expect(signals.maxData).toEqual([5_000_000n]);
+        // A smaller value does not grow the window and must not signal.
         manager.dispatch({ type: QuicFrameType.MAX_DATA, maximum: 1n });
-        expect(events).toEqual([5_000_000n]);
+        expect(signals.maxData).toEqual([5_000_000n]);
     });
 
     it("MAX_STREAMS_BIDI / MAX_STREAMS_UNI are accepted without error", () => {
@@ -379,34 +397,29 @@ describe("connection-level frame handling", () => {
         expect(() => manager.openStream(true)).not.toThrow();
     });
 
-    it("CONNECTION_CLOSE sets closing and emits the close signal", () => {
-        const { manager } = makeManager();
-        const closes: Array<{ errorCode: bigint; reason: string }> = [];
-        manager.on("connectionClose", (p: { errorCode: bigint; reason: string }) => closes.push(p));
+    it("CONNECTION_CLOSE sets closing and signals the close", () => {
+        const { manager, signals } = makeManager();
         manager.dispatch({
             type: QuicFrameType.CONNECTION_CLOSE,
             errorCode: 0x0cn,
             frameType: undefined,
             reason: "bye",
         });
-        expect(closes).toEqual([{ errorCode: 0x0cn, reason: "bye" }]);
+        expect(signals.connectionCloses).toEqual([{ errorCode: 0x0cn, reason: "bye" }]);
         // After connection close, new streams cannot be opened.
         expect(() => manager.openStream(true)).toThrow(/closing/);
     });
 
     it("CONNECTION_CLOSE_APP is also surfaced as a close signal", () => {
-        const { manager } = makeManager();
-        let reason = "";
-        manager.on("connectionClose", (p: { reason: string }) => {
-            reason = p.reason;
-        });
+        const { manager, signals } = makeManager();
         manager.dispatch({
             type: QuicFrameType.CONNECTION_CLOSE_APP,
             errorCode: 0x0103n,
             frameType: 0n,
             reason: "app close",
         });
-        expect(reason).toBe("app close");
+        expect(signals.connectionCloses).toHaveLength(1);
+        expect(signals.connectionCloses[0]?.reason).toBe("app close");
     });
 
     it("informational frames (PING, ACK, CRYPTO, ...) are dispatched without effect", () => {
@@ -469,40 +482,12 @@ describe("teardown", () => {
     });
 });
 
-describe("EventEmitter surface", () => {
-    it("supports on/once/off/removeListener/removeAllListeners/emit", () => {
-        const { manager } = makeManager();
-        const a = (): void => {};
-        const b = (): void => {};
-        manager.on("x", a);
-        manager.on("x", b);
-        manager.once("y", a);
-        manager.emit("x");
-        manager.off("x", a);
-        manager.removeListener("x", b);
-        manager.emit("x");
-        manager.removeAllListeners("x");
-        expect(manager).toBeDefined();
-    });
-
-    it("delivers an event to a once-listener exactly one time", () => {
-        const { manager } = makeManager();
-        let count = 0;
-        manager.once("evt", () => {
-            count++;
-        });
-        manager.emit("evt");
-        manager.emit("evt");
-        expect(count).toBe(1);
-    });
-
-    it("delivers incomingStream events to multiple on-listeners", () => {
-        const { manager } = makeManager();
-        const seen: bigint[] = [];
-        manager.on("incomingStream", (s: { id: bigint }) => seen.push(s.id));
-        manager.on("incomingStream", (s: { id: bigint }) => seen.push(s.id));
+describe("signal sink delivery", () => {
+    it("delivers incomingStream signals for each peer-initiated stream", () => {
+        const { manager, signals } = makeManager();
+        manager.dispatch(streamFrame(1n, [1]));
         manager.dispatch(streamFrame(5n, [1]));
-        expect(seen).toEqual([5n, 5n]);
+        expect(signals.incomingStreams.map((s) => s.id)).toEqual([1n, 5n]);
     });
 });
 
