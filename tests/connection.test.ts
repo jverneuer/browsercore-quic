@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { DeterministicRandom, type RandomSource } from "@browsercore/transport";
 import { connectQuic } from "../src/connection.js";
 import {
     QuicFrameType,
@@ -47,6 +48,7 @@ function makeConn(params?: QuicTransportParameters) {
         initialDcid: EMPTY_CONNECTION_ID,
         initialScid: EMPTY_CONNECTION_ID,
         transportParameters: params,
+        skipHandshake: true, // no TLS server in tests — exercise the data plane only
     });
     return { conn, client, server };
 }
@@ -482,5 +484,110 @@ describe("path validation (RFC 9000 §8.2.1, §19.17)", () => {
         const outbound = await readOutboundFrame(server);
         expect(Array.from((outbound as PathChallengeFrame).data)).toEqual([...snapshot]);
         await c.close(0n, "done");
+    });
+});
+
+describe("RandomSource threading", () => {
+    /**
+     * A 2-state deterministic source so tests can assert exact bytes without
+     * coupling to a particular algorithm. Returns `fill` for the first call,
+     * then zeroes — enough to prove the connection draws from the injected
+     * source for both connection ids and packet numbers.
+     */
+    function fakeRandom(fill: number): RandomSource {
+        let first = true;
+        return {
+            randomBytes: (length: number): Uint8Array => {
+                if (first) {
+                    first = false;
+                    return new Uint8Array(length).fill(fill);
+                }
+                return new Uint8Array(length);
+            },
+        };
+    }
+
+    it("defaults to nodeRandomSource when no random is injected", async () => {
+        const { conn } = makeConn();
+        const c = await conn;
+        // No random option supplied — construction still succeeds and the
+        // connection can generate ids / derive keys.
+        const id = c.generateConnectionId(8);
+        expect(id.length).toBe(8);
+        expect(c.getCrypto()).toBeDefined();
+        await c.close(0n, "done");
+    });
+
+    it("generates connection ids from the injected RandomSource", async () => {
+        const random = fakeRandom(0x42);
+        const { client, server } = createFakeDatagramPair();
+        const c = await connectQuic({
+            transport: client,
+            peer: PEER_ADDR,
+            serverName: "example.com",
+            initialDcid: EMPTY_CONNECTION_ID,
+            initialScid: EMPTY_CONNECTION_ID,
+            random,
+            skipHandshake: true,
+        });
+        const id = c.generateConnectionId(8);
+        expect(Array.from(id)).toEqual([0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42]);
+        void server;
+        await c.close(0n, "done");
+    });
+
+    it("draws the packet-number placeholder from the injected RandomSource", async () => {
+        const random = fakeRandom(0x7a);
+        const { client, server } = createFakeDatagramPair();
+        const c = await connectQuic({
+            transport: client,
+            peer: PEER_ADDR,
+            serverName: "example.com",
+            initialDcid: EMPTY_CONNECTION_ID,
+            initialScid: EMPTY_CONNECTION_ID,
+            random,
+            skipHandshake: true,
+        });
+        // Open + write to a stream so the connection emits a packet, then read
+        // the outbound datagram and inspect its packet number byte.
+        const stream = await c.openBidirectionalStream();
+        await stream.write(new TextEncoder().encode("x"));
+        // Send a PING from the peer to trigger the read loop's send drain.
+        server.send(makePacket({ type: QuicFrameType.PING }), LOCAL_ADDR);
+        await tick();
+        const { data } = await server.recv();
+        // Short header (1 byte) + packet number (1 byte) — the packet number
+        // byte is the first draw from the injected source.
+        expect(data[1]).toBe(0x7a);
+        await c.close(0n, "done");
+    });
+
+    it("seeds the crypto provider with the injected RandomSource", async () => {
+        const random = fakeRandom(0x11);
+        const { client, server } = createFakeDatagramPair();
+        const c = await connectQuic({
+            transport: client,
+            peer: PEER_ADDR,
+            serverName: "example.com",
+            initialDcid: EMPTY_CONNECTION_ID,
+            initialScid: EMPTY_CONNECTION_ID,
+            random,
+            skipHandshake: true,
+        });
+        // The connection's crypto provider should draw from the injected
+        // source — randomBytes reflects the first deterministic draw.
+        const out = c.getCrypto().randomBytes(4);
+        expect(Array.from(out)).toEqual([0x11, 0x11, 0x11, 0x11]);
+        void server;
+        await c.close(0n, "done");
+    });
+
+    it("DeterministicRandom produces stable, seed-repeatable bytes", () => {
+        const a = new DeterministicRandom(0xc0ffee);
+        const b = new DeterministicRandom(0xc0ffee);
+        expect(Array.from(a.randomBytes(16))).toEqual(Array.from(b.randomBytes(16)));
+        // Different seed → different output.
+        const c = new DeterministicRandom(0xdeed);
+        expect(Array.from(c.randomBytes(16))).not.toEqual(Array.from(a.randomBytes(16)));
     });
 });

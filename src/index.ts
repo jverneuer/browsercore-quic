@@ -3,22 +3,25 @@
  *
  * QUIC transport (RFC 9000) over a datagram (UDP) transport. No knowledge of
  * HTTP/3, TLS handshake semantics, or sockets — it composes exclusively over an
- * injected {@link DatagramTransport} and `@browsercore/crypto`. Higher layers
- * (http3) compose through {@link QuicConnection}.
+ * injected {@link DatagramTransport} and an injected `CryptoProvider`. Higher
+ * layers (http3) compose through {@link QuicConnection}.
  */
 
 export { connectQuic, QuicConnectionImpl } from "./connection.js";
 
 export {
     ConnectionClosedError,
+    ConnectionClosingError,
     FlowControlError,
     FrameParseError,
     HandshakeTimeoutError,
     PacketParseError,
+    PacketProtectionError,
     QuicError,
     ResetStreamError,
     StopSendingError,
     TransportParameterError,
+    TlsHandshakeError,
 } from "./errors.js";
 
 export {
@@ -39,19 +42,23 @@ export {
     STREAM_LEN_BIT,
     STREAM_OFF_BIT,
     firstStreamId,
+    makeConnectionId,
     makeStreamId,
     nextStreamId,
     streamIdIsBidirectional,
     streamIdIsClientInitiated,
+    systemClock,
 } from "./types.js";
 
 export { VARINT_MAX } from "./frame/varint.js";
 
 export {
     type BaseQuicFrame,
+    type Clock,
     type ConnectionId,
     type DatagramCloseReason,
     type DatagramTransport,
+    type Logger,
     type QuicConnection,
     type QuicOptions,
     type QuicStream,
@@ -60,11 +67,11 @@ export {
     type StreamState,
     type StreamCloseReason,
     type UdpAddress,
-    type Logger,
-    type Clock,
+    type ClientHelloConfigLike,
+    type ProtocolVersionLike,
 } from "./types.js";
 
-export { silentLogger, devLogger, systemClock } from "./types.js";
+export { devLogger, silentLogger } from "./types.js";
 
 export {
     decodeVarint,
@@ -94,3 +101,37 @@ export {
     toWireParameters,
 } from "./transport-params.js";
 export type { TransportParameters } from "./transport-params.js";
+
+// --- QUIC packet protection (RFC 9001 §5) ----------------------------------
+export {
+    constructNonce,
+    encryptPayload,
+    decryptPayload,
+    computeHeaderProtectionMask,
+    applyHeaderProtection,
+    removeHeaderProtection,
+    protectPayload,
+    unprotectPayload,
+    type QuicAead,
+} from "./packet/packet-protection.js";
+
+// --- QUIC key derivation (RFC 9001 §5) -------------------------------------
+export {
+    quicHkdfExpandLabel,
+    deriveQuicSecrets,
+    deriveInitialSecrets,
+    INITIAL_SALT_V1,
+    QUIC_IV_LENGTH,
+    type QuicProtectionSecrets,
+    type InitialSecrets,
+} from "./crypto/key-derivation.js";
+
+// --- QUIC TLS handshake (RFC 9001 §4, §8) ----------------------------------
+export {
+    runQuicHandshake,
+    adaptQuicStreamToTransport,
+    QuicTransportAdapter,
+    type QuicKeyPhase,
+    type QuicPhaseSecrets,
+    type QuicHandshakeResult,
+} from "./handshake/index.js";

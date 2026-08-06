@@ -21,6 +21,7 @@ import {
     LongPacketType,
     HEADER_FORM_LONG,
     HEADER_FORM_SHORT,
+    makeConnectionId,
 } from "../src/types.js";
 
 describe("serializeLongHeader + parsePacketHeader round-trip", () => {
@@ -31,7 +32,13 @@ describe("serializeLongHeader + parsePacketHeader round-trip", () => {
         scid: Uint8Array,
         pnLen: number,
     ): LongHeader {
-        const out = serializeLongHeader(type, version, dcid, scid, pnLen);
+        const out = serializeLongHeader(
+            type,
+            version,
+            makeConnectionId(dcid),
+            makeConnectionId(scid),
+            pnLen,
+        );
         const header = parsePacketHeader(out);
         if (header.form !== HEADER_FORM_LONG) throw new Error("expected long header");
         return header;
@@ -125,7 +132,7 @@ describe("serializeLongHeader + parsePacketHeader round-trip", () => {
 
 describe("serializeShortHeader + parsePacketHeader", () => {
     it("parses a short header and reads spin/key-phase bits and pn length", () => {
-        const dcid = new Uint8Array([7, 8]);
+        const dcid = makeConnectionId(new Uint8Array([7, 8]));
         for (const { spin, keyPhase, pnLen } of [
             { spin: false, keyPhase: false, pnLen: 1 },
             { spin: true, keyPhase: false, pnLen: 2 },
@@ -146,7 +153,7 @@ describe("serializeShortHeader + parsePacketHeader", () => {
     });
 
     it("emits the DCID bytes after the first byte", () => {
-        const dcid = new Uint8Array([1, 2, 3, 4]);
+        const dcid = makeConnectionId(new Uint8Array([1, 2, 3, 4]));
         const out = serializeShortHeader(dcid, 1, false, false);
         expect(Array.from(out.subarray(1))).toEqual([1, 2, 3, 4]);
         // First byte for no spin/key phase, pnLen 1 = 0x00.

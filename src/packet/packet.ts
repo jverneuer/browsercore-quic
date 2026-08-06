@@ -21,6 +21,7 @@ import {
     HEADER_FORM_LONG,
     HEADER_FORM_SHORT,
     LONG_PACKET_TYPE_MASK,
+    makeConnectionId,
     type ConnectionId,
     type LongPacketTypeValue,
 } from "../types.js";
@@ -63,8 +64,8 @@ export type PacketHeader = LongHeader | ShortHeader;
 export function serializeLongHeader(
     type: LongPacketTypeValue,
     version: number,
-    dcid: ConnectionId,
-    scid: ConnectionId,
+    dcid: Uint8Array,
+    scid: Uint8Array,
     packetNumberLength: number,
     extra: Uint8Array = new Uint8Array(0),
 ): Uint8Array {
@@ -84,7 +85,7 @@ export function serializeLongHeader(
 
 /** Serialize a short (1-RTT) header (without payload / packet number). */
 export function serializeShortHeader(
-    dcid: ConnectionId,
+    dcid: Uint8Array,
     packetNumberLength: number,
     spinBit: boolean,
     keyPhase: boolean,
@@ -141,7 +142,7 @@ function parseLongHeader(first: number, buf: Uint8Array): LongHeader {
     if (buf.length < 6 + dcidLen + 1) {
         throw new RangeError("Buffer too short for DCID");
     }
-    const dcid = buf.subarray(6, 6 + dcidLen);
+    const dcid = makeConnectionId(buf.subarray(6, 6 + dcidLen));
     const scidLen = buf[6 + dcidLen];
     if (scidLen === undefined) {
         throw new RangeError("Buffer too short for SCID");
@@ -149,7 +150,7 @@ function parseLongHeader(first: number, buf: Uint8Array): LongHeader {
     if (buf.length < 6 + dcidLen + 1 + scidLen) {
         throw new RangeError("Buffer too short for SCID");
     }
-    const scid = buf.subarray(6 + dcidLen + 1, 6 + dcidLen + 1 + scidLen);
+    const scid = makeConnectionId(buf.subarray(6 + dcidLen + 1, 6 + dcidLen + 1 + scidLen));
     const headerLength = 6 + dcidLen + 1 + scidLen;
     return {
         form: HEADER_FORM_LONG,
@@ -173,7 +174,7 @@ function parseShortHeader(first: number, _buf: Uint8Array): ShortHeader {
         form: HEADER_FORM_SHORT,
         spinBit,
         keyPhase,
-        dcid: new Uint8Array(0),
+        dcid: makeConnectionId(new Uint8Array(0)),
         packetNumberLength,
         headerLength: 1,
     };
