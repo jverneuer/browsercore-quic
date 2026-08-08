@@ -177,7 +177,9 @@ export function cipherSuiteKeyLength(cipherSuite: CipherSuite): number {
  * @param initialDcid    The client's initial DCID — used to derive the initial QUIC secrets.
  * @param trustAnchors   Trust anchors (PEM/DER) for certificate validation. Defaults to system roots.
  * @param clockNow       Current epoch seconds (injected for deterministic cert validation).
- * @param cryptoProvider Cryptographic provider (defaults to the @browsercore/crypto singleton).
+ * @param cryptoProvider Cryptographic provider (drawn from the platform's
+ *                       crypto adapter; must be supplied or available via
+ *                       QuicOptions.platform).
  */
 export async function runQuicHandshake(
     transport: Transport,

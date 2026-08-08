@@ -208,7 +208,8 @@ export class QuicConnectionImpl implements QuicConnection {
             });
         }
         this.random = options.random ?? createRandomSource();
-        // Resolve the crypto provider: explicit option → platform → singleton.
+        // Resolve the crypto provider: explicit option → platform → crypto
+        // singleton import (last-resort backward compat; see note below).
         // The QUIC key schedule (RFC 9001) delegates all operations to this
         // provider, so it is seeded with the same random source below to make
         // derived bytes reproducible under test.
