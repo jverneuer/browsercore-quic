@@ -16,7 +16,7 @@
 import { describe, it, expect } from "vitest";
 import { connectQuic } from "../src/connection.js";
 import { EMPTY_CONNECTION_ID } from "../src/types.js";
-import { createFakeDatagramPair, PEER_ADDR } from "./fake-transport.js";
+import { createFakeDatagramPair, PEER_ADDR, testEventProvider } from "./fake-transport.js";
 
 const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -75,6 +75,7 @@ function makeConn(): {
         initialDcid: EMPTY_CONNECTION_ID,
         initialScid: EMPTY_CONNECTION_ID,
         skipHandshake: true,
+        events: testEventProvider(),
     });
     return { conn, client, server };
 }
@@ -187,6 +188,7 @@ describe("toTlsClientHelloConfig — tlsProfile branch (connection.ts:1018)", ()
             initialDcid: EMPTY_CONNECTION_ID,
             initialScid: EMPTY_CONNECTION_ID,
             skipHandshake: true,
+            events: testEventProvider(),
             tlsProfile: {
                 cipherSuites: ["TLS_AES_128_GCM_SHA256"],
                 extensionOrder: [0, 10, 13, 16, 23, 43, 45, 51],

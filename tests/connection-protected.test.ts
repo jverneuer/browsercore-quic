@@ -27,7 +27,7 @@ import {
     type QuicProtectionSecrets,
 } from "../src/index.js";
 import type { AeadAlgorithm } from "@browsercore/tls";
-import { createFakeDatagramPair, type FakeDatagramTransport, PEER_ADDR } from "./fake-transport.js";
+import { createFakeDatagramPair, type FakeDatagramTransport, PEER_ADDR, testEventProvider } from "./fake-transport.js";
 import type { DatagramTransport, UdpAddress } from "../src/types.js";
 
 const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
@@ -101,6 +101,7 @@ function makeConn(random?: DeterministicRandom): {
         initialScid: EMPTY_CONNECTION_ID,
         skipHandshake: true,
         random,
+        events: testEventProvider(),
     });
     return { conn: conn as Awaited<ReturnType<typeof connectQuic>>, client, server };
 }
@@ -362,6 +363,7 @@ describe("_teardown — best-effort transport.close() (connection.ts:936-940)", 
             initialScid: EMPTY_CONNECTION_ID,
             skipHandshake: true,
             random,
+            events: testEventProvider(),
         });
 
         // close() must resolve even though transport.close() rejects —

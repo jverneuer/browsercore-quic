@@ -21,29 +21,29 @@
  * smooth byte stream.
  */
 
-import { EventEmitter } from "node:events";
+import type { EventProvider } from "@browsercore/contracts";
 import type { QuicStream } from "../types.js";
-import type { CloseReason, TransportId, TransportState } from "@browsercore/transport";
+import type { CloseReason, Transport, TransportId, TransportState } from "@browsercore/transport";
 
 /**
  * Adapt a QUIC bidirectional stream into a TLS `Transport`.
  *
  * @param stream The QUIC bidirectional stream carrying TLS handshake bytes
  *               (stream 0 for the client, per RFC 9000 §2.1).
- * @returns An EventEmitter that also implements `read`, `write`, `close`,
- *          with `id` and `state` for the TLS `Transport` interface.
+ * @param events Injected EventProvider (decouples from node:events). MUST be
+ *               provided by the composition root (browsersmith).
+ * @returns A Transport with `read`, `write`, `close`, `id`, `state`.
  */
-export function adaptQuicStreamToTransport(stream: QuicStream): QuicTransportAdapter {
-    return new QuicTransportAdapter(stream);
+export function adaptQuicStreamToTransport(stream: QuicStream, events: EventProvider): QuicTransportAdapter {
+    return new QuicTransportAdapter(stream, events);
 }
 
 /**
- * Concrete adapter. QuicStream is NOT an EventEmitter, so we extend EventEmitter
- * to satisfy the `Transport` interface and bridge the stream's read/write/close
- * to it. The TLS handshake driver uses read/write/close and the `id`/`state`
- * fields, so those are provided; events are never subscribed to.
+ * Concrete adapter. QuicStream is NOT an EventEmitter, so we compose an
+ * injected EventProvider to satisfy the `Transport` interface.
  */
-export class QuicTransportAdapter extends EventEmitter {
+export class QuicTransportAdapter implements Transport {
+    private readonly events: EventProvider;
     /** The underlying QUIC stream. */
     private readonly stream: QuicStream;
     /** True once close() has been called. */
@@ -58,9 +58,41 @@ export class QuicTransportAdapter extends EventEmitter {
     public readonly id: TransportId;
     public readonly state: TransportState;
 
-    public constructor(stream: QuicStream) {
-        super();
+    // -------------------------------------------------------------------------
+    // EventProvider delegation — decouples the adapter from node:events.
+    // -------------------------------------------------------------------------
+
+    public on(event: string, listener: (...args: unknown[]) => void): void {
+        this.events.on(event, listener);
+    }
+
+    public once(event: string, listener: (...args: unknown[]) => void): void {
+        this.events.once(event, listener);
+    }
+
+    public off(event: string, listener: (...args: unknown[]) => void): void {
+        this.events.off(event, listener);
+    }
+
+    public removeListener(event: string, listener: (...args: unknown[]) => void): void {
+        this.events.removeListener(event, listener);
+    }
+
+    public emit(event: string, ...args: unknown[]): boolean {
+        return this.events.emit(event, ...args);
+    }
+
+    public listenerCount(event: string): number {
+        return this.events.listenerCount(event);
+    }
+
+    public removeAllListeners(event?: string): void {
+        this.events.removeAllListeners(event);
+    }
+
+    public constructor(stream: QuicStream, events: EventProvider) {
         this.stream = stream;
+        this.events = events;
         this.id = `quic-stream-${stream.id}` as TransportId;
         this.state = { state: "open" };
     }

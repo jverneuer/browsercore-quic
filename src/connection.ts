@@ -28,6 +28,7 @@
 
 import { crypto, type CryptoProvider } from "@browsercore/crypto";
 import { nodeRandomSource, type RandomSource } from "@browsercore/transport";
+import type { EventProvider } from "@browsercore/contracts";
 import {
     QuicFrameType,
     systemClock,
@@ -138,6 +139,8 @@ export class QuicConnectionImpl implements QuicConnection {
      * time so a TLS layer can carry them to the peer in the QUIC extension.
      */
     private readonly encodedLocalParameters: Uint8Array;
+    /** Injected EventProvider for the QUIC→TLS transport adapter (no fallback). */
+    private readonly events: EventProvider;
 
     /** Result of the TLS handshake — set once the handshake completes. */
     private handshakeResult: QuicHandshakeResult | undefined;
@@ -221,6 +224,9 @@ export class QuicConnectionImpl implements QuicConnection {
         this.encodedLocalParameters = encodeTransportParameters(
             toWireParameters(resolveLocalParameters(options)),
         );
+        // EventProvider is injected by the composition root (browsersmith) —
+        // no fallback. Required by the QUIC→TLS transport adapter.
+        this.events = options.events;
     }
 
     // --- public QuicConnection surface ------------------------------------------
@@ -526,7 +532,7 @@ export class QuicConnectionImpl implements QuicConnection {
     public async performHandshake(): Promise<void> {
         // Open a bidirectional stream for the TLS handshake (stream 0 for the client).
         const stream = await this.openBidirectionalStream();
-        const transport = adaptQuicStreamToTransport(stream);
+        const transport = adaptQuicStreamToTransport(stream, this.events);
 
         // Run the TLS handshake, capturing QUIC protection secrets at each phase.
         const result = await runQuicHandshake(
