@@ -5,6 +5,7 @@ import type {
     RandomSource,
 } from "@browsercore/transport";
 import type { CryptoProvider } from "@browsercore/crypto";
+import type { EventProvider } from "@browsercore/contracts";
 
 /**
  * Domain types for @browsercore/quic.
@@ -493,6 +494,13 @@ export interface QuicOptions {
      * @browsercore/crypto.
      */
     readonly crypto?: CryptoProvider;
+    /**
+     * EventProvider for the QUIC→TLS transport adapter. Injected by the
+     * composition root (browsersmith) — this package provides no fallback.
+     * Required so the TLS handshake driver's EventEmitter-shaped Transport
+     * works without a direct dependency on node:events.
+     */
+    readonly events: EventProvider;
 }
 
 /** QUIC transport parameters the local endpoint advertises. */

@@ -22,7 +22,7 @@ import {
 import { serializeFrame, readFrames } from "../src/frame/frame.js";
 import { serializeShortHeader, serializeLongHeader } from "../src/packet/packet.js";
 import { concatAll } from "../src/utils.js";
-import { FakeDatagramTransport, createFakeDatagramPair, LOCAL_ADDR, PEER_ADDR } from "./fake-transport.js";
+import { FakeDatagramTransport, createFakeDatagramPair, LOCAL_ADDR, PEER_ADDR, testEventProvider } from "./fake-transport.js";
 
 /** Wait a macrotask so the connection's async read loop drains queued work. */
 const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
@@ -49,6 +49,7 @@ function makeConn(params?: QuicTransportParameters) {
         initialScid: EMPTY_CONNECTION_ID,
         transportParameters: params,
         skipHandshake: true, // no TLS server in tests — exercise the data plane only
+        events: testEventProvider(),
     });
     return { conn, client, server };
 }
@@ -529,6 +530,7 @@ describe("RandomSource threading", () => {
             initialScid: EMPTY_CONNECTION_ID,
             random,
             skipHandshake: true,
+            events: testEventProvider(),
         });
         const id = c.generateConnectionId(8);
         expect(Array.from(id)).toEqual([0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42]);
@@ -547,6 +549,7 @@ describe("RandomSource threading", () => {
             initialScid: EMPTY_CONNECTION_ID,
             random,
             skipHandshake: true,
+            events: testEventProvider(),
         });
         // Open + write to a stream so the connection emits a packet, then read
         // the outbound datagram and inspect its packet number byte.
@@ -573,6 +576,7 @@ describe("RandomSource threading", () => {
             initialScid: EMPTY_CONNECTION_ID,
             random,
             skipHandshake: true,
+            events: testEventProvider(),
         });
         // The connection's crypto provider should draw from the injected
         // source — randomBytes reflects the first deterministic draw.

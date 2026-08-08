@@ -36,7 +36,7 @@ import type { AeadAlgorithm } from "@browsercore/tls";
 import { serializeFrame } from "../src/frame/frame.js";
 import { serializeShortHeader, parsePacketHeader } from "../src/packet/packet.js";
 import { concatAll } from "../src/utils.js";
-import { createFakeDatagramPair, PEER_ADDR, LOCAL_ADDR, type FakeDatagramTransport } from "./fake-transport.js";
+import { createFakeDatagramPair, PEER_ADDR, LOCAL_ADDR, type FakeDatagramTransport, testEventProvider } from "./fake-transport.js";
 
 const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -65,6 +65,7 @@ function makeConn() {
         initialDcid: EMPTY_CONNECTION_ID,
         initialScid: EMPTY_CONNECTION_ID,
         skipHandshake: true,
+        events: testEventProvider(),
     });
     return { conn, client, server };
 }
@@ -79,6 +80,7 @@ function makeConnWithRandom(random: DeterministicRandom) {
         initialScid: EMPTY_CONNECTION_ID,
         skipHandshake: true,
         random,
+        events: testEventProvider(),
     });
     return { conn, client, server };
 }
@@ -993,6 +995,7 @@ describe("protected packet wrap path (handshakeResult installed)", () => {
             initialDcid: EMPTY_CONNECTION_ID,
             initialScid: EMPTY_CONNECTION_ID,
             skipHandshake: true,
+            events: testEventProvider(),
             tlsProfile: {
                 cipherSuites: ["TLS_AES_128_GCM_SHA256"],
                 extensionOrder: [0, 10, 13, 16, 23, 43, 45, 51],
