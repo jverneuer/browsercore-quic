@@ -43,6 +43,7 @@
         "vitest": "^4.1.10"
     },
     "dependencies": {
+        "@browsercore/contracts": "0.2.2",
         "@browsercore/crypto": "0.2.1",
         "@browsercore/tls": "0.4.0"
     },

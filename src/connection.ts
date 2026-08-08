@@ -60,6 +60,7 @@ import {
     ConnectionClosedError,
     ConnectionClosingError,
     PacketProtectionError,
+    QuicError,
     TlsHandshakeError,
 } from "./errors.js";
 import { createStreamManager, type StreamManager } from "./stream/stream.js";
@@ -139,7 +140,11 @@ export class QuicConnectionImpl implements QuicConnection {
      * time so a TLS layer can carry them to the peer in the QUIC extension.
      */
     private readonly encodedLocalParameters: Uint8Array;
-    /** Injected EventProvider for the QUIC→TLS transport adapter (no fallback). */
+    /**
+     * EventProvider for the QUIC→TLS transport adapter. Resolved from
+     * {@link QuicOptions.events} or {@link QuicOptions.platform}.events —
+     * there is no singleton fallback.
+     */
     private readonly events: EventProvider;
 
     /** Result of the TLS handshake — set once the handshake completes. */
@@ -203,12 +208,15 @@ export class QuicConnectionImpl implements QuicConnection {
             });
         }
         this.random = options.random ?? nodeRandomSource;
-        // The crypto provider is seeded with the same random source so the
-        // QUIC key schedule (RFC 9001) derives bytes deterministically when a
-        // deterministic source is injected. Delegates all other operations to
-        // the singleton `crypto` provider.
+        // Resolve the crypto provider: explicit option → platform → singleton.
+        // The QUIC key schedule (RFC 9001) delegates all operations to this
+        // provider, so it is seeded with the same random source below to make
+        // derived bytes reproducible under test.
         const randomSource = this.random;
-        this.cryptoProvider = new Proxy(crypto, {
+        const cryptoBackend: CryptoProvider = options.crypto
+            ?? options.platform?.crypto?.provider
+            ?? crypto;
+        this.cryptoProvider = new Proxy(cryptoBackend, {
             get(target, prop, receiver) {
                 if (prop === "randomBytes") {
                     return (length: number): Uint8Array => randomSource.randomBytes(length);
@@ -224,9 +232,17 @@ export class QuicConnectionImpl implements QuicConnection {
         this.encodedLocalParameters = encodeTransportParameters(
             toWireParameters(resolveLocalParameters(options)),
         );
-        // EventProvider is injected by the composition root (browsersmith) —
-        // no fallback. Required by the QUIC→TLS transport adapter.
-        this.events = options.events;
+        // EventProvider is injected by the composition root (browsersmith).
+        // Resolve from the explicit option first, then platform.events. There
+        // is no singleton fallback — the QUIC→TLS transport adapter requires
+        // one to drive the handshake.
+        const resolvedEvents = options.events ?? options.platform?.events;
+        if (resolvedEvents === undefined) {
+            throw new QuicError(
+                "QuicOptions requires `events` or `platform.events` for the QUIC→TLS transport adapter",
+            );
+        }
+        this.events = resolvedEvents;
     }
 
     // --- public QuicConnection surface ------------------------------------------
@@ -1038,7 +1054,10 @@ function toTlsClientHelloConfig(like: ClientHelloConfigLike | undefined, serverN
  * not wire-ready without a protection + handshake layer on top).
  */
 export async function connectQuic(options: QuicOptions): Promise<QuicConnection> {
-    const clock: Clock = options.clock ?? systemClock;
+    // Resolve the clock: explicit option → platform.time.clock → systemClock.
+    const clock: Clock = options.clock
+        ?? options.platform?.time?.clock
+        ?? systemClock;
     const id = `quic_${clock.now().toString(36)}`;
 
     // The stream manager is constructed before the connection, but its frames
