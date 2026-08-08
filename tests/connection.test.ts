@@ -508,7 +508,7 @@ describe("RandomSource threading", () => {
         };
     }
 
-    it("defaults to nodeRandomSource when no random is injected", async () => {
+    it("defaults to a node-backed source when no random is injected", async () => {
         const { conn } = makeConn();
         const c = await conn;
         // No random option supplied — construction still succeeds and the

@@ -471,8 +471,9 @@ export interface QuicOptions {
     readonly clock?: Clock;
     /**
      * Random source for connection-id generation and packet-number placeholders.
-     * Defaults to {@link nodeRandomSource}. Inject a deterministic source in
-     * tests to make wire bytes reproducible.
+     * Defaults to a `node:crypto.randomBytes` backed source (via
+     * `createRandomSource()`). Inject a deterministic source in tests to make
+     * wire bytes reproducible.
      */
     readonly random?: RandomSource;
     /**

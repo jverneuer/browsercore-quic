@@ -27,7 +27,7 @@
  */
 
 import { crypto, type CryptoProvider } from "@browsercore/crypto";
-import { nodeRandomSource, type RandomSource } from "@browsercore/transport";
+import { createRandomSource, type RandomSource } from "@browsercore/transport";
 import type { EventProvider } from "@browsercore/contracts";
 import {
     QuicFrameType,
@@ -207,7 +207,7 @@ export class QuicConnectionImpl implements QuicConnection {
                 void this.onPeerClose(errorCode, reason);
             });
         }
-        this.random = options.random ?? nodeRandomSource;
+        this.random = options.random ?? createRandomSource();
         // Resolve the crypto provider: explicit option → platform → singleton.
         // The QUIC key schedule (RFC 9001) delegates all operations to this
         // provider, so it is seeded with the same random source below to make
