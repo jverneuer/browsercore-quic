@@ -64,27 +64,37 @@ export class QuicTransportAdapter implements Transport {
     // -------------------------------------------------------------------------
 
     public on(event: string, listener: (...args: unknown[]) => void): this {
-        this.events.on(event, listener);
+        {
+            this.events.on(event, listener);
+        }
         return this;
     }
 
     public once(event: string, listener: (...args: unknown[]) => void): this {
-        this.events.once(event, listener);
+        {
+            this.events.once(event, listener);
+        }
         return this;
     }
 
     public off(event: string, listener: (...args: unknown[]) => void): this {
-        this.events.off(event, listener);
+        {
+            this.events.off(event, listener);
+        }
         return this;
     }
 
     public removeListener(event: string, listener: (...args: unknown[]) => void): this {
-        this.events.removeListener(event, listener);
+        {
+            this.events.removeListener(event, listener);
+        }
         return this;
     }
 
     public addListener(event: string, listener: (...args: unknown[]) => void): this {
-        this.events.on(event, listener);
+        {
+            this.events.on(event, listener);
+        }
         return this;
     }
 
@@ -97,7 +107,9 @@ export class QuicTransportAdapter implements Transport {
     }
 
     public removeAllListeners(event?: string): this {
-        this.events.removeAllListeners(event);
+        {
+            this.events.removeAllListeners(event);
+        }
         return this;
     }
 
