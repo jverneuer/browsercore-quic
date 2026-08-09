@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import type { QuicStream, StreamId, CloseReason } from "../src/types.js";
 import { QuicTransportAdapter, adaptQuicStreamToTransport } from "../src/handshake/quic-transport-adapter.js";
+import { testEventProvider } from "./fake-transport.js";
 
 // ---------------------------------------------------------------------------
 // Mock QuicStream
@@ -102,25 +103,25 @@ describe("QuicTransportAdapter", () => {
     describe("construction", () => {
         it("exposes the stream id prefixed with quic-stream-", () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
             expect(adapter.id).toBe("quic-stream-0");
         });
 
         it("formats the id for non-zero stream ids", () => {
             const stream = new FakeQuicStream(makeStreamId(5));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
             expect(adapter.id).toBe("quic-stream-5");
         });
 
         it("starts in the open state", () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
             expect(adapter.state).toEqual({ state: "open" });
         });
 
         it("is an EventEmitter", () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
             expect(typeof adapter.on).toBe("function");
             expect(typeof adapter.emit).toBe("function");
         });
@@ -129,7 +130,7 @@ describe("QuicTransportAdapter", () => {
     describe("adaptQuicStreamToTransport factory", () => {
         it("returns a QuicTransportAdapter instance", () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = adaptQuicStreamToTransport(stream);
+            const adapter = adaptQuicStreamToTransport(stream, testEventProvider());
             expect(adapter).toBeInstanceOf(QuicTransportAdapter);
         });
     });
@@ -137,7 +138,7 @@ describe("QuicTransportAdapter", () => {
     describe("read()", () => {
         it("returns a buffered chunk when chunks are already pending", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             // Push a chunk so the stream.read() resolves immediately.
             stream.pushChunk(new Uint8Array([1, 2, 3]));
@@ -148,7 +149,7 @@ describe("QuicTransportAdapter", () => {
 
         it("drains buffered chunks in FIFO order", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             // Push two chunks; they should be returned in order.
             stream.pushChunk(new Uint8Array([10]));
@@ -162,7 +163,7 @@ describe("QuicTransportAdapter", () => {
 
         it("waits for the next chunk when the buffer is empty", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             // read() should block until a chunk arrives.
             const readPromise = adapter.read();
@@ -179,7 +180,7 @@ describe("QuicTransportAdapter", () => {
 
         it("returns an empty chunk (FIN) without error", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const readPromise = adapter.read();
             await Promise.resolve();
@@ -191,7 +192,7 @@ describe("QuicTransportAdapter", () => {
 
         it("propagates an error when the underlying stream fails", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const readPromise = adapter.read();
             await Promise.resolve();
@@ -203,7 +204,7 @@ describe("QuicTransportAdapter", () => {
 
         it("rejects with an error after the adapter is closed", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             await adapter.close();
 
@@ -214,7 +215,7 @@ describe("QuicTransportAdapter", () => {
     describe("write()", () => {
         it("forwards bytes to the underlying stream", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const data = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
             await adapter.write(data);
@@ -225,7 +226,7 @@ describe("QuicTransportAdapter", () => {
 
         it("forwards multiple writes in order", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             await adapter.write(new Uint8Array([1]));
             await adapter.write(new Uint8Array([2]));
@@ -239,7 +240,7 @@ describe("QuicTransportAdapter", () => {
 
         it("rejects writes after close", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             await adapter.close();
 
@@ -250,7 +251,7 @@ describe("QuicTransportAdapter", () => {
     describe("close()", () => {
         it("closes the underlying stream", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             await adapter.close();
 
@@ -259,7 +260,7 @@ describe("QuicTransportAdapter", () => {
 
         it("is idempotent — calling twice does not throw", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             await adapter.close();
             await adapter.close(); // must not throw
@@ -269,7 +270,7 @@ describe("QuicTransportAdapter", () => {
 
         it("rejects a waiting reader when closed", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const readPromise = adapter.read();
             await Promise.resolve();
@@ -281,7 +282,7 @@ describe("QuicTransportAdapter", () => {
 
         it("accepts an optional CloseReason parameter", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const reason: CloseReason = { kind: "normal" };
             await adapter.close(reason);
@@ -297,7 +298,7 @@ describe("QuicTransportAdapter", () => {
             // after close → readNextChunk sees waitingReader === undefined and
             // pushes the chunk into pending[] instead of dispatching it.
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const readPromise = adapter.read();
             await Promise.resolve();
@@ -318,7 +319,7 @@ describe("QuicTransportAdapter", () => {
             // → stream.read() rejects after close → readNextChunk's catch sees
             // waitingReject === undefined and returns silently.
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const readPromise = adapter.read();
             await Promise.resolve();
@@ -336,7 +337,7 @@ describe("QuicTransportAdapter", () => {
             // chunk from the stream via readNextChunk. This test verifies the
             // normal sequential read path: each read() call returns one chunk.
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const first = adapter.read();
             await Promise.resolve();
@@ -359,7 +360,7 @@ describe("QuicTransportAdapter", () => {
 
         it("dispatches the next chunk to a waiting reader as soon as it arrives", async () => {
             const stream = new FakeQuicStream(makeStreamId(0));
-            const adapter = new QuicTransportAdapter(stream);
+            const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
             const firstRead = adapter.read();
             await Promise.resolve();

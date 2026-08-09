@@ -4,7 +4,7 @@ import type {
     DatagramCloseReason,
     RandomSource,
 } from "@browsercore/transport";
-import type { CryptoProvider } from "@browsercore/crypto";
+import type { CryptoProvider, EventProvider, Platform } from "@browsercore/contracts";
 
 /**
  * Domain types for @browsercore/quic.
@@ -465,12 +465,14 @@ export interface QuicOptions {
     /**
      * Clock source for time-driven logic. Defaults to {@link systemClock}.
      * Inject a fake in tests to make connection id generation deterministic.
+     * Ignored when {@link clock} is supplied by {@link platform}.
      */
     readonly clock?: Clock;
     /**
      * Random source for connection-id generation and packet-number placeholders.
-     * Defaults to {@link nodeRandomSource}. Inject a deterministic source in
-     * tests to make wire bytes reproducible.
+     * Defaults to a `node:crypto.randomBytes` backed source (via
+     * `createRandomSource()`). Inject a deterministic source in tests to make
+     * wire bytes reproducible.
      */
     readonly random?: RandomSource;
     /**
@@ -487,12 +489,35 @@ export interface QuicOptions {
      */
     readonly tlsProfile?: ClientHelloConfigLike;
     /**
-     * Cryptographic provider for the handshake and packet protection.
-     * Injected so QUIC can be tested with a fake crypto provider and has no
-     * dependency on node:crypto. Defaults to the Node-backed provider from
-     * @browsercore/crypto.
+     * Cryptographic provider for the handshake and packet protection
+     * (RFC 9001). Injected so QUIC can be tested with a fake crypto provider
+     * and has no dependency on node:crypto. Required — there is no singleton
+     * fallback. Ignored when {@link crypto} is supplied by {@link platform}.
      */
     readonly crypto?: CryptoProvider;
+    /**
+     * EventProvider for the QUIC→TLS transport adapter. Injected by the
+     * composition root (browsersmith) — this package provides no fallback.
+     * Required so the TLS handshake driver's EventEmitter-shaped Transport
+     * works without a direct dependency on node:events.
+     *
+     * Prefer threading {@link platform} instead; when `platform.events` is
+     * present it is used and this field may be omitted.
+     */
+    readonly events?: EventProvider;
+    /**
+     * The Platform composition root. When supplied, any service not passed as
+     * an individual field is resolved from here: `crypto` from
+     * `platform.crypto.provider`, `events` from `platform.events`, and
+     * `clock` from `platform.time.clock`. Individual fields always take
+     * precedence over the platform-supplied value, so existing callers that
+     * pass `crypto`/`events` directly keep working unchanged.
+     *
+     * This is the migration path toward DI through Platform: callers move
+     * from passing individual service fields to threading a single Platform
+     * through every protocol package.
+     */
+    readonly platform?: Platform;
 }
 
 /** QUIC transport parameters the local endpoint advertises. */

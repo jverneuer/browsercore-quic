@@ -16,7 +16,8 @@ import {
     type InitialSecrets,
     type QuicProtectionSecrets,
 } from "../src/crypto/key-derivation.js";
-import { crypto, SHA_256, SHA_384 } from "@browsercore/crypto";
+import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
+import { SHA_256, SHA_384 } from "@browsercore/crypto";
 
 // HKDF-Expand allows at most 255 blocks. For a given hash the maximum
 // derivable length is 255 * hashLen. These boundaries are the crux of line 79.

@@ -15,14 +15,15 @@ import {
     type InitialSecrets,
     type QuicProtectionSecrets,
 } from "../src/crypto/key-derivation.js";
-import { crypto, SHA_256 } from "@browsercore/crypto";
+import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
+import { SHA_256 } from "@browsercore/crypto";
 
 describe("quicHkdfExpandLabel", () => {
     it("produces the correct output length", () => {
         const secret = crypto.randomBytes(32);
-        const key = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16);
-        const iv = quicHkdfExpandLabel(secret, "iv", new Uint8Array(0), 12);
-        const hp = quicHkdfExpandLabel(secret, "hp", new Uint8Array(0), 16);
+        const key = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16, SHA_256, crypto);
+        const iv = quicHkdfExpandLabel(secret, "iv", new Uint8Array(0), 12, SHA_256, crypto);
+        const hp = quicHkdfExpandLabel(secret, "hp", new Uint8Array(0), 16, SHA_256, crypto);
         expect(key.length).toBe(16);
         expect(iv.length).toBe(12);
         expect(hp.length).toBe(16);
@@ -30,7 +31,7 @@ describe("quicHkdfExpandLabel", () => {
 
     it("uses the 'quic ' prefix (distinct from TLS 1.3's 'tls13 ')", () => {
         const secret = crypto.randomBytes(32);
-        const quicKey = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16);
+        const quicKey = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16, SHA_256, crypto);
         // TLS 1.3's HKDF-Expand-Label with "tls13 " prefix produces different output.
         const tlsLabel = new Uint8Array([
             0, 16, // length = 16
@@ -46,15 +47,15 @@ describe("quicHkdfExpandLabel", () => {
 
     it("is deterministic for the same inputs", () => {
         const secret = crypto.randomBytes(32);
-        const a = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16);
-        const b = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16);
+        const a = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16, SHA_256, crypto);
+        const b = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16, SHA_256, crypto);
         expect(Array.from(a)).toEqual(Array.from(b));
     });
 
     it("produces different outputs for different labels", () => {
         const secret = crypto.randomBytes(32);
-        const key = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16);
-        const iv = quicHkdfExpandLabel(secret, "iv", new Uint8Array(0), 16);
+        const key = quicHkdfExpandLabel(secret, "key", new Uint8Array(0), 16, SHA_256, crypto);
+        const iv = quicHkdfExpandLabel(secret, "iv", new Uint8Array(0), 16, SHA_256, crypto);
         expect(Buffer.from(key).equals(Buffer.from(iv))).toBe(false);
     });
 });

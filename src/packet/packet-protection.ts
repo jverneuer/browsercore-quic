@@ -24,7 +24,7 @@
  *     — the connection layer passes the correct keys for the packet's phase.
  */
 
-import { type CryptoProvider, crypto } from "@browsercore/crypto";
+import type { CryptoProvider } from "@browsercore/contracts";
 import { QUIC_IV_LENGTH, type QuicProtectionSecrets } from "../crypto/key-derivation.js";
 import { concat, assertNever } from "../utils.js";
 
@@ -117,7 +117,7 @@ export function encryptPayload(
     nonce: Uint8Array,
     plaintext: Uint8Array,
     aad: Uint8Array,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): Uint8Array {
     return aeadEncrypt(aead, key, nonce, plaintext, aad, provider);
 }
@@ -141,7 +141,7 @@ export function decryptPayload(
     nonce: Uint8Array,
     ciphertext: Uint8Array,
     aad: Uint8Array,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): Uint8Array {
     return aeadDecrypt(aead, key, nonce, ciphertext, aad, provider);
 }
@@ -213,7 +213,7 @@ function aeadDecrypt(
 export function computeHeaderProtectionMask(
     hpKey: Uint8Array,
     sample: Uint8Array,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): Uint8Array {
     if (sample.length < HP_SAMPLE_LENGTH) {
         throw new RangeError(
@@ -327,7 +327,7 @@ export function protectPayload(
     aead: QuicAead,
     secrets: QuicProtectionSecrets,
     isLongHeader: boolean,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): { protectedPayload: Uint8Array; maskedFirstByte: number; maskedPacketNumber: Uint8Array } {
     // 1. AEAD-encrypt the payload with the header as AAD.
     const nonce = constructNonce(secrets.iv, packetNumber);
@@ -381,7 +381,7 @@ export function unprotectPayload(
     isLongHeader: boolean,
     aead: QuicAead,
     secrets: QuicProtectionSecrets,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): { payload: Uint8Array; packetNumber: bigint } {
     // 1. Sample the protected payload to derive the header-protection mask.
     const sampleStart = HP_SAMPLE_OFFSET;

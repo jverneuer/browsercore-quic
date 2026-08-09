@@ -7,7 +7,9 @@
  * It is NOT a real transport — it exists only to drive connection.test.ts.
  */
 
+import type { CryptoProvider, EventProvider } from "@browsercore/contracts";
 import type { DatagramTransport, UdpAddress } from "../src/types.js";
+import { nodeCrypto } from "./helpers/node-crypto-provider.js";
 
 /** A fixed IPv4 loopback address for tests. */
 export const LOCAL_ADDR: UdpAddress = { address: "127.0.0.1", port: 4433, family: 4 };
@@ -32,6 +34,52 @@ export function createFakeDatagramPair(): {
     client._peer = server;
     server._peer = client;
     return { client, server };
+}
+
+/**
+ * Node-backed CryptoProvider for tests. Production code injects crypto via
+ * Platform; tests run on Node CI so they may build a real provider here and
+ * thread it through the code under test.
+ */
+export function testCryptoProvider(): CryptoProvider {
+    return nodeCrypto;
+}
+
+/** Minimal in-memory EventProvider for tests — decouples from node:events. */
+export function testEventProvider(): EventProvider {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    return {
+        on(event, listener) {
+            if (!listeners.has(event)) listeners.set(event, new Set());
+            listeners.get(event)!.add(listener);
+        },
+        once(event, listener) {
+            const wrapped = (...args: unknown[]) => {
+                listeners.get(event)?.delete(wrapped);
+                listener(...args);
+            };
+            this.on(event, wrapped);
+        },
+        off(event, listener) {
+            listeners.get(event)?.delete(listener);
+        },
+        removeListener(event, listener) {
+            listeners.get(event)?.delete(listener);
+        },
+        emit(event, ...args) {
+            const set = listeners.get(event);
+            if (!set || set.size === 0) return false;
+            for (const l of [...set]) l(...args);
+            return true;
+        },
+        listenerCount(event) {
+            return listeners.get(event)?.size ?? 0;
+        },
+        removeAllListeners(event) {
+            if (event) listeners.delete(event);
+            else listeners.clear();
+        },
+    };
 }
 
 export class FakeDatagramTransport implements DatagramTransport {

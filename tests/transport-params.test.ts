@@ -26,6 +26,7 @@ import { concatAll } from "../src/utils.js";
 import { QuicConnectionImpl } from "../src/connection.js";
 import { createStreamManager } from "../src/stream/stream.js";
 import type { DatagramTransport, UdpAddress } from "../src/types.js";
+import { testCryptoProvider, testEventProvider } from "./fake-transport.js";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -70,6 +71,8 @@ function makeConnection(params: QuicTransportParameters = {}): QuicConnectionImp
             initialDcid: makeConnectionId(new Uint8Array([1, 2, 3])),
             initialScid: makeConnectionId(new Uint8Array([4, 5, 6])),
             transportParameters: params,
+            events: testEventProvider(),
+            crypto: testCryptoProvider(),
         },
         manager,
         makeConnectionId(new Uint8Array([1, 2, 3])),

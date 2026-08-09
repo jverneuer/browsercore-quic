@@ -111,6 +111,24 @@ control frames (MAX_DATA, MAX_STREAM_DATA, CONNECTION_CLOSE, …) back down to
 the connection's packetizer. The connection owns the read loop and packs
 outbound frames into short-header (1-RTT) packets.
 
+## Platform threading
+
+`QuicOptions` accepts an optional `platform?: Platform` field. When supplied,
+any service not passed as an individual field is resolved from the Platform
+composition root:
+
+| Option field | Resolved from |
+| --- | --- |
+| `crypto` | `platform.crypto.provider` |
+| `events` | `platform.events` |
+| `clock` | `platform.time.clock` |
+
+Individual fields always take precedence, so existing callers that pass
+`crypto`/`events` directly keep working unchanged. This is the migration path
+toward DI through Platform: callers move from passing individual service fields
+to threading a single Platform (assembled by `browsersmith`) through every
+protocol package. See `@browsercore/contracts` for the `Platform` interface.
+
 ## Known limitations
 
 - The TLS 1.3 handshake and packet protection (header protection + AEAD

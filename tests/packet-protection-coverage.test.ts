@@ -6,7 +6,7 @@ import {
     constructNonce,
     type QuicAead,
 } from "../src/packet/packet-protection.js";
-import { crypto } from "@browsercore/crypto";
+import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
 
 /**
  * Targeted coverage for uncovered branches in packet-protection.ts:

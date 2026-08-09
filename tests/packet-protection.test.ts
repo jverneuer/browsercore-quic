@@ -10,7 +10,7 @@ import {
     unprotectPayload,
     type QuicAead,
 } from "../src/packet/packet-protection.js";
-import { crypto } from "@browsercore/crypto";
+import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
 
 describe("constructNonce", () => {
     it("XORs the packet number", () => {
@@ -39,8 +39,8 @@ describe("encryptPayload + decryptPayload", () => {
             const nonce = constructNonce(iv, 1n);
             const plaintext = new TextEncoder().encode("hello");
             const aad = new Uint8Array([0xc0, 0x01]);
-            const ciphertext = encryptPayload(aead, key, nonce, plaintext, aad);
-            const decrypted = decryptPayload(aead, key, nonce, ciphertext, aad);
+            const ciphertext = encryptPayload(aead, key, nonce, plaintext, aad, crypto);
+            const decrypted = decryptPayload(aead, key, nonce, ciphertext, aad, crypto);
             expect(new TextDecoder().decode(decrypted)).toBe("hello");
         });
         it(aead + " fails with tampered AAD", () => {
@@ -49,8 +49,8 @@ describe("encryptPayload + decryptPayload", () => {
             const nonce = constructNonce(iv, 1n);
             const plaintext = new Uint8Array([1, 2, 3]);
             const aad = new Uint8Array([0xc0, 0x01]);
-            const ciphertext = encryptPayload(aead, key, nonce, plaintext, aad);
-            expect(() => decryptPayload(aead, key, nonce, ciphertext, new Uint8Array([0xc1, 0x01]))).toThrow();
+            const ciphertext = encryptPayload(aead, key, nonce, plaintext, aad, crypto);
+            expect(() => decryptPayload(aead, key, nonce, ciphertext, new Uint8Array([0xc1, 0x01]), crypto)).toThrow();
         });
     }
 });
@@ -59,12 +59,12 @@ describe("computeHeaderProtectionMask", () => {
     it("produces a 16-byte mask", () => {
         const hpKey = crypto.randomBytes(16);
         const sample = crypto.randomBytes(20);
-        const mask = computeHeaderProtectionMask(hpKey, sample);
+        const mask = computeHeaderProtectionMask(hpKey, sample, crypto);
         expect(mask.length).toBe(16);
     });
     it("throws on short sample", () => {
         const hpKey = crypto.randomBytes(16);
-        expect(() => computeHeaderProtectionMask(hpKey, crypto.randomBytes(10))).toThrow(RangeError);
+        expect(() => computeHeaderProtectionMask(hpKey, crypto.randomBytes(10), crypto)).toThrow(RangeError);
     });
 });
 
@@ -72,7 +72,7 @@ describe("applyHeaderProtection + removeHeaderProtection", () => {
     it("round-trips short header", () => {
         const hpKey = crypto.randomBytes(16);
         const sample = crypto.randomBytes(20);
-        const mask = computeHeaderProtectionMask(hpKey, sample);
+        const mask = computeHeaderProtectionMask(hpKey, sample, crypto);
         const applied = applyHeaderProtection(0x43, 0x42n, 1, mask, false);
         const removed = removeHeaderProtection(applied.firstByte, applied.packetNumberBytes, 1, mask, false);
         expect(removed.firstByte).toBe(0x43);
@@ -81,7 +81,7 @@ describe("applyHeaderProtection + removeHeaderProtection", () => {
     it("round-trips long header", () => {
         const hpKey = crypto.randomBytes(16);
         const sample = crypto.randomBytes(20);
-        const mask = computeHeaderProtectionMask(hpKey, sample);
+        const mask = computeHeaderProtectionMask(hpKey, sample, crypto);
         const applied = applyHeaderProtection(0xc2, 0x1234n, 2, mask, true);
         const removed = removeHeaderProtection(applied.firstByte, applied.packetNumberBytes, 2, mask, true);
         expect(removed.firstByte).toBe(0xc2);
