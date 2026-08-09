@@ -21,7 +21,6 @@
  * smooth byte stream.
  */
 
-import type { EventEmitter } from "node:events";
 import type { EventProvider } from "@browsercore/contracts";
 import type { QuicStream } from "../types.js";
 import type { CloseReason, Transport, TransportId, TransportState } from "@browsercore/transport";
@@ -63,29 +62,24 @@ export class QuicTransportAdapter implements Transport {
     // EventProvider delegation — decouples the adapter from node:events.
     // -------------------------------------------------------------------------
 
-    public on(event: string, listener: (...args: unknown[]) => void): this {
+    public on(event: string, listener: (...args: unknown[]) => void): void {
         this.events.on(event, listener);
-        return this;
     }
 
-    public once(event: string, listener: (...args: unknown[]) => void): this {
+    public once(event: string, listener: (...args: unknown[]) => void): void {
         this.events.once(event, listener);
-        return this;
     }
 
-    public off(event: string, listener: (...args: unknown[]) => void): this {
+    public off(event: string, listener: (...args: unknown[]) => void): void {
         this.events.off(event, listener);
-        return this;
     }
 
-    public removeListener(event: string, listener: (...args: unknown[]) => void): this {
+    public removeListener(event: string, listener: (...args: unknown[]) => void): void {
         this.events.removeListener(event, listener);
-        return this;
     }
 
-    public addListener(event: string, listener: (...args: unknown[]) => void): this {
+    public addListener(event: string, listener: (...args: unknown[]) => void): void {
         this.events.on(event, listener);
-        return this;
     }
 
     public emit(event: string, ...args: unknown[]): boolean {
@@ -96,39 +90,8 @@ export class QuicTransportAdapter implements Transport {
         return this.events.listenerCount(event);
     }
 
-    public removeAllListeners(event?: string): this {
+    public removeAllListeners(event?: string): void {
         this.events.removeAllListeners(event);
-        return this;
-    }
-
-    public eventNames(): Array<string | symbol> {
-        return [];
-    }
-
-    public getMaxListeners(): number {
-        return Infinity;
-    }
-
-    public listeners(_event: string): ReturnType<EventEmitter["listeners"]> {
-        return [];
-    }
-
-    public rawListeners(_event: string): ReturnType<EventEmitter["rawListeners"]> {
-        return [];
-    }
-
-    public setMaxListeners(_n: number): this {
-        return this;
-    }
-
-    public prependListener(event: string, listener: (...args: unknown[]) => void): this {
-        this.events.on(event, listener);
-        return this;
-    }
-
-    public prependOnceListener(event: string, listener: (...args: unknown[]) => void): this {
-        this.events.once(event, listener);
-        return this;
     }
 
     public constructor(stream: QuicStream, events: EventProvider) {
