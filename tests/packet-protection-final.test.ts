@@ -9,7 +9,7 @@ import {
     unprotectPayload,
     type QuicAead,
 } from "../src/packet/packet-protection.js";
-import { crypto } from "@browsercore/crypto";
+import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
 
 /**
  * Targeted coverage for the remaining uncovered lines in packet-protection.ts.
@@ -57,11 +57,11 @@ describe("AES-128-GCM dispatch arm (encryptPayload / decryptPayload)", () => {
         const plaintext = new TextEncoder().encode("aes-128-gcm payload");
         const aad = new Uint8Array([0xc0, 0x00, 0x01]);
 
-        const ciphertext = encryptPayload("AES-128-GCM", key, nonce, plaintext, aad);
+        const ciphertext = encryptPayload("AES-128-GCM", key, nonce, plaintext, aad, crypto);
         // AEAD ciphertext is plaintext + 16-byte authentication tag.
         expect(ciphertext.length).toBe(plaintext.length + 16);
 
-        const decrypted = decryptPayload("AES-128-GCM", key, nonce, ciphertext, aad);
+        const decrypted = decryptPayload("AES-128-GCM", key, nonce, ciphertext, aad, crypto);
         expect(new TextDecoder().decode(decrypted)).toBe("aes-128-gcm payload");
     });
 

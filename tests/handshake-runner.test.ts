@@ -18,7 +18,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { crypto, SHA_256, SHA_384, type CryptoProvider, type HashId } from "@browsercore/crypto";
+import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
+import { SHA_256, SHA_384, type HashId } from "@browsercore/crypto";
+import type { CryptoProvider } from "@browsercore/contracts";
 import type { Transport } from "@browsercore/transport";
 import type {
     ApplicationTrafficSecrets,
@@ -99,6 +101,23 @@ vi.mock("@browsercore/tls", async (importOriginal) => {
 import { runQuicHandshake, QuicHandshakeContext } from "../src/handshake/quic-handshake.js";
 import { deriveQuicSecrets, QUIC_IV_LENGTH } from "../src/crypto/key-derivation.js";
 
+/**
+ * runQuicHandshake requires an injected crypto provider (no singleton
+ * fallback). This helper threads the test provider through so each call site
+ * keeps its existing trustAnchors / clockNow arguments unchanged.
+ */
+function runQuicHandshakeWithProvider(
+    transport: Transport,
+    profile: ClientHelloConfig,
+    serverName: string,
+    initialDcid: Uint8Array,
+    trustAnchors: readonly Uint8Array[] = [],
+    clockNow: number = Math.floor(Date.now() / 1000),
+    provider: CryptoProvider = crypto,
+): Promise<import("../src/handshake/quic-handshake.js").QuicHandshakeResult> {
+    return runQuicHandshake(transport, profile, serverName, initialDcid, trustAnchors, clockNow, provider);
+}
+
 // ---------------------------------------------------------------------------
 // Fakes & helpers
 // ---------------------------------------------------------------------------
@@ -153,7 +172,7 @@ describe("runQuicHandshake", () => {
     });
 
     it("returns a result with all three key phases in derivation order", async () => {
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -166,7 +185,7 @@ describe("runQuicHandshake", () => {
     });
 
     it("maps the negotiated cipher suite to the QUIC AEAD algorithm + hash", async () => {
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -178,7 +197,7 @@ describe("runQuicHandshake", () => {
     });
 
     it("produces AES-128 key lengths (16-byte key/hp, 12-byte iv) for the AES_128_GCM suite", async () => {
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -202,7 +221,7 @@ describe("runQuicHandshake", () => {
         mockServerHsSecret = new Uint8Array(48).fill(0x22);
         mockMasterSecret = new Uint8Array(48).fill(0x33);
 
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -230,7 +249,7 @@ describe("runQuicHandshake", () => {
     });
 
     it("produces distinct client and server protection secrets per phase", async () => {
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -245,7 +264,7 @@ describe("runQuicHandshake", () => {
     });
 
     it("produces distinct key, iv, and hp within each protection secret", async () => {
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -264,8 +283,8 @@ describe("runQuicHandshake", () => {
         const dcidA = new Uint8Array([0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]);
         const dcidB = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
 
-        const resultA = await runQuicHandshake(fakeTransport(), fakeProfile(), "example.com", dcidA);
-        const resultB = await runQuicHandshake(fakeTransport(), fakeProfile(), "example.com", dcidB);
+        const resultA = await runQuicHandshakeWithProvider(fakeTransport(), fakeProfile(), "example.com", dcidA);
+        const resultB = await runQuicHandshakeWithProvider(fakeTransport(), fakeProfile(), "example.com", dcidB);
 
         // Initial phase secrets differ because the DCID feeds the initial salt derivation.
         const initialA = resultA.phases[0];
@@ -283,8 +302,8 @@ describe("runQuicHandshake", () => {
     });
 
     it("is deterministic for the same DCID + traffic secrets", async () => {
-        const a = await runQuicHandshake(fakeTransport(), fakeProfile(), "example.com", INITIAL_DCID);
-        const b = await runQuicHandshake(fakeTransport(), fakeProfile(), "example.com", INITIAL_DCID);
+        const a = await runQuicHandshakeWithProvider(fakeTransport(), fakeProfile(), "example.com", INITIAL_DCID);
+        const b = await runQuicHandshakeWithProvider(fakeTransport(), fakeProfile(), "example.com", INITIAL_DCID);
         expect(Array.from(a.phases[0].clientTrafficSecret))
             .toEqual(Array.from(b.phases[0].clientTrafficSecret));
         expect(Array.from(a.phases[0].clientProtection.key))
@@ -293,7 +312,7 @@ describe("runQuicHandshake", () => {
 
     it("includes the ALPN protocol when the server negotiates one", async () => {
         mockAlpn = "h3";
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -304,7 +323,7 @@ describe("runQuicHandshake", () => {
 
     it("omits ALPN from the result when the server does not negotiate one", async () => {
         mockAlpn = undefined;
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -317,7 +336,7 @@ describe("runQuicHandshake", () => {
     it("forwards the peer certificate from the TLS handshake", async () => {
         const cert = { subject: "CN=example.com", issuer: "CN=Test CA" };
         mockPeerCertificate = cert;
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -328,7 +347,7 @@ describe("runQuicHandshake", () => {
 
     it("maps CHACHA20-POLY1305 correctly", async () => {
         mockCipherSuite = "TLS_CHACHA20_POLY1305_SHA256";
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -339,7 +358,7 @@ describe("runQuicHandshake", () => {
     });
 
     it("passes the injected crypto provider down via the context", async () => {
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -357,7 +376,7 @@ describe("runQuicHandshake", () => {
         mockClientHsSecret = crypto.randomBytes(32);
         mockServerHsSecret = crypto.randomBytes(32);
 
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",
@@ -373,7 +392,7 @@ describe("runQuicHandshake", () => {
         mockClientHsSecret = crypto.randomBytes(32);
         mockServerHsSecret = crypto.randomBytes(32);
 
-        const result = await runQuicHandshake(
+        const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
             fakeProfile(),
             "example.com",

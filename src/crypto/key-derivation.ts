@@ -20,7 +20,8 @@
  * the label strings and the HKDF-Expand-Label wire format per RFC 9001 §5.1.
  */
 
-import { crypto, SHA_256, type CryptoProvider, type HashId } from "@browsercore/crypto";
+import type { CryptoProvider } from "@browsercore/contracts";
+import { SHA_256, type HashId } from "@browsercore/crypto";
 import { hashLengthFor } from "./hash-length.js";
 
 /**
@@ -42,7 +43,7 @@ export function quicHkdfExpandLabel(
     context: Uint8Array,
     length: number,
     hash: HashId = SHA_256,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): Uint8Array {
     const prefix = "quic ";
     const labelBytes = new TextEncoder().encode(prefix + label);
@@ -71,7 +72,7 @@ function hkdfExpand(
     prk: Uint8Array,
     info: Uint8Array,
     length: number,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): Uint8Array {
     const hashLen = hashLengthFor(hash);
     const n = Math.ceil(length / hashLen);
@@ -103,7 +104,7 @@ export function deriveQuicSecrets(
     trafficSecret: Uint8Array,
     keyLength: number,
     hash: HashId = SHA_256,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): QuicProtectionSecrets {
     const key = quicHkdfExpandLabel(trafficSecret, "key", new Uint8Array(0), keyLength, hash, provider);
     const iv = quicHkdfExpandLabel(trafficSecret, "iv", new Uint8Array(0), QUIC_IV_LENGTH, hash, provider);
@@ -127,7 +128,7 @@ export function deriveInitialSecrets(
     initialDcid: Uint8Array,
     initialSalt: Uint8Array,
     hash: HashId = SHA_256,
-    provider: CryptoProvider = crypto,
+    provider: CryptoProvider,
 ): InitialSecrets {
     const initialSecret = provider.hmac(hash, initialSalt, initialDcid);
     const hashLen = hashLengthFor(hash);

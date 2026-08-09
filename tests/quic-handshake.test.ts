@@ -8,7 +8,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { crypto, type CryptoProvider, type HashId } from "@browsercore/crypto";
+import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
+import type { CryptoProvider, HashId } from "@browsercore/crypto";
 import type { Transport } from "@browsercore/transport";
 import type { AeadAlgorithm, CipherSuite } from "@browsercore/tls";
 import {

@@ -16,7 +16,7 @@
 import { describe, it, expect } from "vitest";
 import { connectQuic } from "../src/connection.js";
 import { EMPTY_CONNECTION_ID } from "../src/types.js";
-import { createFakeDatagramPair, PEER_ADDR, testEventProvider } from "./fake-transport.js";
+import { createFakeDatagramPair, PEER_ADDR, testCryptoProvider, testEventProvider } from "./fake-transport.js";
 
 const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -76,6 +76,7 @@ function makeConn(): {
         initialScid: EMPTY_CONNECTION_ID,
         skipHandshake: true,
         events: testEventProvider(),
+        crypto: testCryptoProvider(),
     });
     return { conn, client, server };
 }
@@ -199,6 +200,7 @@ describe("toTlsClientHelloConfig — tlsProfile branch (connection.ts:1018)", ()
                 alpnProtocols: ["h3"],
                 grease: false,
             },
+            crypto: testCryptoProvider(),
         });
         // The else branch ran during construction; the connection is usable.
         expect((await c.openBidirectionalStream()).id).toBe(0n);

@@ -40,7 +40,7 @@ import {
     type LongPacketTypeValue,
 } from "../src/index.js";
 import type { AeadAlgorithm } from "@browsercore/tls";
-import { createFakeDatagramPair, LOCAL_ADDR, PEER_ADDR, type FakeDatagramTransport, testEventProvider } from "./fake-transport.js";
+import { createFakeDatagramPair, LOCAL_ADDR, PEER_ADDR, type FakeDatagramTransport, testCryptoProvider, testEventProvider } from "./fake-transport.js";
 
 /** Wait a macrotask so the connection's async read loop drains queued work. */
 const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
@@ -132,6 +132,7 @@ function makeConn(random?: DeterministicRandom): {
         skipHandshake: true,
         random,
         events: testEventProvider(),
+        crypto: testCryptoProvider(),
     });
     return { conn: conn as Promise<ReturnType<typeof connectQuic> extends Promise<infer C> ? C : never>, client, server };
 }
@@ -248,6 +249,7 @@ describe("performHandshake + connectQuic non-skip path (537-552, 1081-1083)", ()
             initialScid: EMPTY_CONNECTION_ID,
             random: new DeterministicRandom(0xface),
             events: testEventProvider(),
+            crypto: testCryptoProvider(),
         });
 
         // performHandshake assigned handshakeResult and set outboundKeyPhase.

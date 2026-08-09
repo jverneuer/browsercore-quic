@@ -17,7 +17,9 @@
  * handshake completes, then derive the QUIC packet-protection secrets.
  */
 
-import { crypto, SHA_256, type CryptoProvider, type HashId } from "@browsercore/crypto";
+import type { CryptoProvider } from "@browsercore/contracts";
+import { SHA_256, type HashId } from "@browsercore/crypto";
+
 import type { Transport } from "@browsercore/transport";
 import {
     generateKeyShares,
@@ -177,9 +179,9 @@ export function cipherSuiteKeyLength(cipherSuite: CipherSuite): number {
  * @param initialDcid    The client's initial DCID — used to derive the initial QUIC secrets.
  * @param trustAnchors   Trust anchors (PEM/DER) for certificate validation. Defaults to system roots.
  * @param clockNow       Current epoch seconds (injected for deterministic cert validation).
- * @param cryptoProvider Cryptographic provider (drawn from the platform's
- *                       crypto adapter; must be supplied or available via
- *                       QuicOptions.platform).
+ * @param cryptoProvider Cryptographic provider for the QUIC key schedule
+ *                       (RFC 9001). Injected via QuicOptions.crypto or
+ *                       QuicOptions.platform.crypto.provider — required.
  */
 export async function runQuicHandshake(
     transport: Transport,
@@ -188,7 +190,7 @@ export async function runQuicHandshake(
     initialDcid: Uint8Array,
     trustAnchors: readonly Uint8Array[] = [],
     clockNow: number = Math.floor(Date.now() / 1000),
-    cryptoProvider: CryptoProvider = crypto,
+    cryptoProvider: CryptoProvider,
 ): Promise<QuicHandshakeResult> {
     // --- Phase 0: derive initial QUIC secrets from the DCID (RFC 9001 §5.2) --
     const initial = deriveInitialSecrets(initialDcid, INITIAL_SALT_V1, SHA_256, cryptoProvider);

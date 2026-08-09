@@ -4,8 +4,7 @@ import type {
     DatagramCloseReason,
     RandomSource,
 } from "@browsercore/transport";
-import type { CryptoProvider } from "@browsercore/crypto";
-import type { EventProvider, Platform } from "@browsercore/contracts";
+import type { CryptoProvider, EventProvider, Platform } from "@browsercore/contracts";
 
 /**
  * Domain types for @browsercore/quic.
@@ -490,11 +489,10 @@ export interface QuicOptions {
      */
     readonly tlsProfile?: ClientHelloConfigLike;
     /**
-     * Cryptographic provider for the handshake and packet protection.
-     * Injected so QUIC can be tested with a fake crypto provider and has no
-     * dependency on node:crypto. Defaults to the Node-backed provider from
-     * @browsercore/crypto. Ignored when {@link crypto} is supplied by
-     * {@link platform}.
+     * Cryptographic provider for the handshake and packet protection
+     * (RFC 9001). Injected so QUIC can be tested with a fake crypto provider
+     * and has no dependency on node:crypto. Required — there is no singleton
+     * fallback. Ignored when {@link crypto} is supplied by {@link platform}.
      */
     readonly crypto?: CryptoProvider;
     /**

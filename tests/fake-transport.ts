@@ -7,8 +7,9 @@
  * It is NOT a real transport — it exists only to drive connection.test.ts.
  */
 
-import type { EventProvider } from "@browsercore/contracts";
+import type { CryptoProvider, EventProvider } from "@browsercore/contracts";
 import type { DatagramTransport, UdpAddress } from "../src/types.js";
+import { nodeCrypto } from "./helpers/node-crypto-provider.js";
 
 /** A fixed IPv4 loopback address for tests. */
 export const LOCAL_ADDR: UdpAddress = { address: "127.0.0.1", port: 4433, family: 4 };
@@ -33,6 +34,15 @@ export function createFakeDatagramPair(): {
     client._peer = server;
     server._peer = client;
     return { client, server };
+}
+
+/**
+ * Node-backed CryptoProvider for tests. Production code injects crypto via
+ * Platform; tests run on Node CI so they may build a real provider here and
+ * thread it through the code under test.
+ */
+export function testCryptoProvider(): CryptoProvider {
+    return nodeCrypto;
 }
 
 /** Minimal in-memory EventProvider for tests — decouples from node:events. */

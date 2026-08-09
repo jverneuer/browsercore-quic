@@ -26,9 +26,8 @@
  * manager and packed into packets; writes resolve once bytes are buffered.
  */
 
-import { crypto, type CryptoProvider } from "@browsercore/crypto";
+import type { CryptoProvider, EventProvider } from "@browsercore/contracts";
 import { createRandomSource, type RandomSource } from "@browsercore/transport";
-import type { EventProvider } from "@browsercore/contracts";
 import {
     QuicFrameType,
     systemClock,
@@ -208,15 +207,17 @@ export class QuicConnectionImpl implements QuicConnection {
             });
         }
         this.random = options.random ?? createRandomSource();
-        // Resolve the crypto provider: explicit option → platform → crypto
-        // singleton import (last-resort backward compat; see note below).
-        // The QUIC key schedule (RFC 9001) delegates all operations to this
-        // provider, so it is seeded with the same random source below to make
-        // derived bytes reproducible under test.
+        // Resolve the crypto provider: explicit option → platform. There is no
+        // singleton fallback — QUIC's key schedule (RFC 9001) delegates all
+        // operations to the injected provider, which is seeded with the same
+        // random source below to make derived bytes reproducible under test.
         const randomSource = this.random;
-        const cryptoBackend: CryptoProvider = options.crypto
-            ?? options.platform?.crypto?.provider
-            ?? crypto;
+        const cryptoBackend = options.crypto ?? options.platform?.crypto?.provider;
+        if (cryptoBackend === undefined) {
+            throw new QuicError(
+                "QuicOptions requires `crypto` or `platform.crypto.provider` for the QUIC key schedule (RFC 9001)",
+            );
+        }
         this.cryptoProvider = new Proxy(cryptoBackend, {
             get(target, prop, receiver) {
                 if (prop === "randomBytes") {
