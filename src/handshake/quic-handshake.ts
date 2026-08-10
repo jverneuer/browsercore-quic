@@ -32,6 +32,8 @@ import {
     type Certificate,
     type TrafficSecrets,
     type HandshakeContext,
+    type HandshakePhase,
+    type AlertLevel,
 } from "@browsercore/tls";
 import {
     deriveInitialSecrets,
@@ -100,14 +102,33 @@ export class QuicHandshakeContext implements HandshakeContext {
     public clientHsTrafficSecret: Uint8Array = new Uint8Array(0);
     public serverHsTrafficSecret: Uint8Array = new Uint8Array(0);
     public masterSecret: Uint8Array = new Uint8Array(0);
+    /** Raw application traffic secrets — set by the driver when app keys are derived. */
+    public clientAppSecret: Uint8Array = new Uint8Array(0);
+    public serverAppSecret: Uint8Array = new Uint8Array(0);
     public clientHsSeq = 0;
     public serverHsSeq = 0;
+    /** True once handshake traffic secrets are derived (sendAlert gate). */
+    public hsTrafficReady = false;
     public alpnProtocol?: string;
     public peerCertificate?: Certificate;
+    /** Current handshake phase for timeout attribution (updated by the driver). */
+    public currentPhase: HandshakePhase = "init";
+    /** Optional debug trace callback — unused by QUIC, satisfies the interface. */
+    public onDebug: ((msg: string) => void) | undefined;
 
     public constructor(transport: Transport, cryptoProvider: CryptoProvider) {
         this.transport = transport;
         this.crypto = cryptoProvider;
+    }
+
+    /**
+     * Send a TLS alert (RFC 8446 §6). Intentionally a no-op: QUIC signals
+     * transport-level errors via CONNECTION_CLOSE frames (RFC 9001 §4.8), not
+     * TLS alerts, so this path is never reached in a QUIC handshake. The stub
+     * satisfies the {@link HandshakeContext} interface.
+     */
+    public async sendAlert(_level: AlertLevel, _description: number): Promise<void> {
+        // No-op — QUIC owns error signalling at the transport layer.
     }
 }
 
