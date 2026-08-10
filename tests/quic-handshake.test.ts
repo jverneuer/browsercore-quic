@@ -107,6 +107,34 @@ describe("QuicHandshakeContext", () => {
         const ctx = new QuicHandshakeContext(fakeTransport(), crypto);
         expect(ctx.peerCertificate).toBeUndefined();
     });
+
+    it("defaults clientAppSecret and serverAppSecret to empty Uint8Arrays", () => {
+        const ctx = new QuicHandshakeContext(fakeTransport(), crypto);
+        expect(ctx.clientAppSecret).toEqual(new Uint8Array(0));
+        expect(ctx.serverAppSecret).toEqual(new Uint8Array(0));
+    });
+
+    it("defaults hsTrafficReady to false", () => {
+        const ctx = new QuicHandshakeContext(fakeTransport(), crypto);
+        expect(ctx.hsTrafficReady).toBe(false);
+    });
+
+    it("defaults currentPhase to init", () => {
+        const ctx = new QuicHandshakeContext(fakeTransport(), crypto);
+        expect(ctx.currentPhase).toBe("init");
+    });
+
+    it("defaults onDebug to undefined", () => {
+        const ctx = new QuicHandshakeContext(fakeTransport(), crypto);
+        expect(ctx.onDebug).toBeUndefined();
+    });
+
+    it("sendAlert resolves without error (QUIC no-op stub)", async () => {
+        const ctx = new QuicHandshakeContext(fakeTransport(), crypto);
+        // QUIC signals errors via CONNECTION_CLOSE, not TLS alerts — the stub
+        // must resolve cleanly and not throw.
+        await expect(ctx.sendAlert("fatal", 40)).resolves.toBeUndefined();
+    });
 });
 
 describe("mapCipherSuite", () => {
