@@ -91,6 +91,13 @@ export interface QuicHandshakeResult {
 export class QuicHandshakeContext implements HandshakeContext {
     public readonly transport: Transport;
     public readonly crypto: CryptoProvider;
+    /**
+     * Compression provider for RFC 8879 CompressedCertificate. QUIC never
+     * advertises compress_certificate, so this stays undefined — the server
+     * must then never send a compressed certificate. (Structurally declared:
+     * tls's BrotliDecompressor is deliberately not re-exported.)
+     */
+    public compression: { brotliDecompress(data: Uint8Array): Uint8Array } | undefined = undefined;
     public readBuffer: Uint8Array = new Uint8Array(0);
     public readonly transcript: Uint8Array[] = [];
     public cipherSuite: CipherSuite = "TLS_AES_128_GCM_SHA256";
