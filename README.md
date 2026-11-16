@@ -138,3 +138,7 @@ protocol package. See `@browsercore/contracts` for the `Platform` interface.
   handshake layer on top.
 - No congestion controller, no connection migration, no PATH_CHALLENGE /
   PATH_RESPONSE beyond frame relay, and no liveness PING.
+
+## Contributing
+
+Contributions are welcome — bug reports, reproductions, docs and code alike. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the full guide lives in the [browsersmith repo](https://github.com/jverneuer/browsersmith/blob/main/CONTRIBUTING.md). First timer? Check the [`good first issue`](https://github.com/jverneuer/browsercore-quic/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label. Security issues: [SECURITY.md](SECURITY.md), never a public issue.
