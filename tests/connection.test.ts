@@ -9,11 +9,12 @@
 
 import { describe, it, expect } from "vitest";
 import { DeterministicRandom, type RandomSource } from "@browsercore/transport";
-import { connectQuic } from "../src/connection.js";
+import { connectQuic, QuicConnectionImpl } from "../src/connection.js";
 import {
     QuicFrameType,
     EMPTY_CONNECTION_ID,
     LongPacketType,
+    makeConnectionId,
     type PathChallengeFrame,
     type PathResponseFrame,
     type QuicFrame,
@@ -39,20 +40,29 @@ function makePacket(...frames: QuicFrame[]): Uint8Array {
     return concatAll([header, pn, payload]);
 }
 
-function makeConn(params?: QuicTransportParameters) {
+function makeConn(params?: QuicTransportParameters): {
+    conn: Promise<QuicConnectionImpl>;
+    client: FakeDatagramTransport;
+    server: FakeDatagramTransport;
+} {
     const { client, server } = createFakeDatagramPair();
+    // `transportParameters` is only included when supplied —
+    // exactOptionalPropertyTypes forbids an explicit `undefined`.
     const conn = connectQuic({
         transport: client,
         peer: PEER_ADDR,
         serverName: "example.com",
         initialDcid: EMPTY_CONNECTION_ID,
         initialScid: EMPTY_CONNECTION_ID,
-        transportParameters: params,
+        ...(params !== undefined ? { transportParameters: params } : {}),
         skipHandshake: true, // no TLS server in tests — exercise the data plane only
         events: testEventProvider(),
         crypto: testCryptoProvider(),
     });
-    return { conn, client, server };
+    // connectQuic resolves the QuicConnection interface but always returns the
+    // concrete impl; the random-source tests below use impl-only surface
+    // (generateConnectionId / getCrypto).
+    return { conn: conn as Promise<QuicConnectionImpl>, client, server };
 }
 
 describe("connectQuic", () => {
@@ -198,7 +208,7 @@ describe("read loop dispatch", () => {
                     type: QuicFrameType.NEW_CONNECTION_ID,
                     sequenceNumber: 0n,
                     retirePriorTo: 0n,
-                    connectionId: new Uint8Array([1]),
+                    connectionId: makeConnectionId(new Uint8Array([1])),
                     statelessResetToken: new Uint8Array(16),
                 },
                 { type: QuicFrameType.RETIRE_CONNECTION_ID, sequenceNumber: 0n },
@@ -295,8 +305,7 @@ describe("read loop fatal error handling", () => {
         // The first CONNECTION_CLOSE tears the connection down; a second one must
         // hit onPeerClose's `if (this.closed) return` guard without re-entering
         // teardown. onPeerClose runs once.
-        const { conn, client, server } = makeConn();
-        const c = await conn;
+        const { client, server } = makeConn();
         const closeFrame = makePacket({
             type: QuicFrameType.CONNECTION_CLOSE,
             errorCode: 0x0cn,
@@ -523,7 +532,9 @@ describe("RandomSource threading", () => {
     it("generates connection ids from the injected RandomSource", async () => {
         const random = fakeRandom(0x42);
         const { client, server } = createFakeDatagramPair();
-        const c = await connectQuic({
+        // Impl-only surface under test (generateConnectionId lives on
+        // QuicConnectionImpl, not the public QuicConnection interface).
+        const c = (await connectQuic({
             transport: client,
             peer: PEER_ADDR,
             serverName: "example.com",
@@ -533,7 +544,7 @@ describe("RandomSource threading", () => {
             skipHandshake: true,
             events: testEventProvider(),
             crypto: testCryptoProvider(),
-        });
+        })) as QuicConnectionImpl;
         const id = c.generateConnectionId(8);
         expect(Array.from(id)).toEqual([0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42]);
         void server;
@@ -571,7 +582,9 @@ describe("RandomSource threading", () => {
     it("seeds the crypto provider with the injected RandomSource", async () => {
         const random = fakeRandom(0x11);
         const { client, server } = createFakeDatagramPair();
-        const c = await connectQuic({
+        // Impl-only surface under test (getCrypto lives on QuicConnectionImpl,
+        // not the public QuicConnection interface).
+        const c = (await connectQuic({
             transport: client,
             peer: PEER_ADDR,
             serverName: "example.com",
@@ -581,7 +594,7 @@ describe("RandomSource threading", () => {
             skipHandshake: true,
             events: testEventProvider(),
             crypto: testCryptoProvider(),
-        });
+        })) as QuicConnectionImpl;
         // The connection's crypto provider should draw from the injected
         // source — randomBytes reflects the first deterministic draw.
         const out = c.getCrypto().randomBytes(4);

@@ -1,6 +1,6 @@
 {
     "name": "@browsercore/quic",
-    "version": "0.2.7",
+    "version": "0.2.8",
     "description": "QUIC transport (RFC 9000) — packet headers, frames, packet protection, streams, and connection lifecycle over a datagram (UDP) transport. No knowledge of HTTP/3 or TLS handshake semantics.",
     "repository": {
         "type": "git",
@@ -29,7 +29,7 @@
         "clean": "rm -rf dist *.tsbuildinfo",
         "build": "tsc -p tsconfig.json",
         "prepublishOnly": "npm run clean && npm run build",
-        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
         "lint": "oxlint --type-aware src/",
         "test": "vitest run"
     },

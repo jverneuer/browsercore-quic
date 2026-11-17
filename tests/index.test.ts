@@ -85,9 +85,9 @@ describe("barrel public API", () => {
         expect(STREAM_FIN_BIT).toBe(0x01);
         expect(firstStreamId(true, true)).toBe(0n);
         expect(makeStreamId(5n)).toBe(5n);
-        expect(nextStreamId(0n)).toBe(4n);
-        expect(streamIdIsBidirectional(0n)).toBe(true);
-        expect(streamIdIsClientInitiated(0n)).toBe(true);
+        expect(nextStreamId(makeStreamId(0n))).toBe(4n);
+        expect(streamIdIsBidirectional(makeStreamId(0n))).toBe(true);
+        expect(streamIdIsClientInitiated(makeStreamId(0n))).toBe(true);
     });
 
     it("re-exports varint helpers", () => {

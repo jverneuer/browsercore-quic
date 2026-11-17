@@ -14,8 +14,7 @@
 
 import { describe, it, expect } from "vitest";
 import { serializeFrame, decodeFrame, readFrames } from "../src/frame/frame.js";
-import { decodeVarint, encodeVarint } from "../src/frame/varint.js";
-import { QuicFrameType, type QuicFrame } from "../src/types.js";
+import { QuicFrameType, makeConnectionId, type QuicFrame } from "../src/types.js";
 
 /** A reader that yields the whole buffer once, then null forever. */
 function fullReader(bytes: Uint8Array): () => Promise<Uint8Array | null> {
@@ -44,10 +43,16 @@ async function decodeAll(bytes: Uint8Array): Promise<QuicFrame[]> {
     return out;
 }
 
-async function firstFrame(frame: QuicFrame): Promise<QuicFrame> {
+/**
+ * Serialize + re-decode a single frame, preserving its variant: the result is
+ * typed as the input frame's type (the round-trip invariant these tests
+ * assert — a decoder that surfaced a different variant would fail the
+ * expectations anyway).
+ */
+async function firstFrame<T extends QuicFrame>(frame: T): Promise<T> {
     const [f] = await decodeAll(serializeFrame(frame));
     if (f === undefined) throw new Error("no frame decoded");
-    return f;
+    return f as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +370,7 @@ describe("NEW_CONNECTION_ID edge cases", () => {
             type: QuicFrameType.NEW_CONNECTION_ID,
             sequenceNumber: 0n,
             retirePriorTo: 0n,
-            connectionId: new Uint8Array(0),
+            connectionId: makeConnectionId(new Uint8Array(0)),
             statelessResetToken: token,
         });
         if (decoded.type !== QuicFrameType.NEW_CONNECTION_ID)
@@ -376,7 +381,7 @@ describe("NEW_CONNECTION_ID edge cases", () => {
     });
 
     it("round-trips with retirePriorTo > sequenceNumber (allowed by the wire format)", async () => {
-        const cid = new Uint8Array([0x01, 0x02, 0x03]);
+        const cid = makeConnectionId(new Uint8Array([0x01, 0x02, 0x03]));
         const token = new Uint8Array(16).fill(0x00);
         const decoded = await firstFrame({
             type: QuicFrameType.NEW_CONNECTION_ID,
@@ -392,7 +397,7 @@ describe("NEW_CONNECTION_ID edge cases", () => {
     });
 
     it("round-trips with a long connection id (20 bytes) and max sequence", async () => {
-        const cid = new Uint8Array(20).fill(0xca);
+        const cid = makeConnectionId(new Uint8Array(20).fill(0xca));
         const token = new Uint8Array(16).fill(0xac);
         const decoded = await firstFrame({
             type: QuicFrameType.NEW_CONNECTION_ID,
@@ -548,7 +553,7 @@ describe("CONNECTION_CLOSE_APP edge cases", () => {
 describe("ACK frame with ranges via incremental delivery", () => {
     it("parses an ACK with 3 ack ranges when delivered in 3-byte chunks", async () => {
         const frame = {
-            type: QuicFrameType.ACK as const,
+            type: QuicFrameType.ACK,
             largestAck: 200n,
             ackDelay: 1n,
             ackRangeCount: 3n,
@@ -595,7 +600,7 @@ describe("mixed multi-frame packets", () => {
                 type: QuicFrameType.NEW_CONNECTION_ID,
                 sequenceNumber: 1n,
                 retirePriorTo: 0n,
-                connectionId: new Uint8Array([0xab, 0xcd]),
+                connectionId: makeConnectionId(new Uint8Array([0xab, 0xcd])),
                 statelessResetToken: new Uint8Array(16).fill(0x11),
             },
             { type: QuicFrameType.RETIRE_CONNECTION_ID, sequenceNumber: 2n },

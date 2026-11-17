@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from "vitest";
 import { serializeFrame, decodeFrame, readFrames } from "../src/frame/frame.js";
-import { QuicFrameType, type QuicFrame } from "../src/types.js";
+import { QuicFrameType, makeConnectionId, type QuicFrame } from "../src/types.js";
 
 /** A reader that yields the whole buffer once, then null forever. */
 function fullReader(bytes: Uint8Array): () => Promise<Uint8Array | null> {
@@ -37,10 +37,16 @@ async function decodeAll(bytes: Uint8Array): Promise<QuicFrame[]> {
     return out;
 }
 
-async function firstFrame(frame: QuicFrame): Promise<QuicFrame> {
+/**
+ * Serialize + re-decode a single frame, preserving its variant: the result is
+ * typed as the input frame's type (the round-trip invariant these tests
+ * assert — a decoder that surfaced a different variant would fail the
+ * expectations anyway).
+ */
+async function firstFrame<T extends QuicFrame>(frame: T): Promise<T> {
     const [f] = await decodeAll(serializeFrame(frame));
     if (f === undefined) throw new Error("no frame decoded");
-    return f;
+    return f as T;
 }
 
 describe("serializeFrame + decodeFrame round-trip", () => {
@@ -53,7 +59,7 @@ describe("serializeFrame + decodeFrame round-trip", () => {
 
     it("round-trips a basic ACK frame with ack ranges", async () => {
         const frame = {
-            type: QuicFrameType.ACK as const,
+            type: QuicFrameType.ACK,
             largestAck: 100n,
             ackDelay: 5n,
             ackRangeCount: 2n,
@@ -112,8 +118,11 @@ describe("serializeFrame + decodeFrame round-trip", () => {
         // First byte is the type varint; falls back to 0x02 (plain ACK) on the wire.
         expect(bytes[0]).toBe(QuicFrameType.ACK);
         const [decoded] = await decodeAll(bytes);
-        expect(decoded?.type).toBe(QuicFrameType.ACK);
-        expect(decoded?.ecnCounts).toBeUndefined();
+        if (decoded?.type !== QuicFrameType.ACK && decoded?.type !== QuicFrameType.ACK_ECN) {
+            throw new Error(`expected an ACK frame, got type ${String(decoded?.type)}`);
+        }
+        expect(decoded.type).toBe(QuicFrameType.ACK);
+        expect(decoded.ecnCounts).toBeUndefined();
     });
 
     it("round-trips RESET_STREAM and STOP_SENDING", async () => {
@@ -230,7 +239,7 @@ describe("serializeFrame + decodeFrame round-trip", () => {
     });
 
     it("round-trips a NEW_CONNECTION_ID frame (stateless reset token is 16 bytes)", async () => {
-        const cid = new Uint8Array([0xa0, 0xa1, 0xa2, 0xa3]);
+        const cid = makeConnectionId(new Uint8Array([0xa0, 0xa1, 0xa2, 0xa3]));
         const token = new Uint8Array(16).fill(0x5a);
         const decoded = await firstFrame({
             type: QuicFrameType.NEW_CONNECTION_ID,
@@ -344,9 +353,12 @@ describe("readFrames", () => {
         const out: QuicFrame[] = [];
         for await (const f of readFrames(chunkedReader(bytes, 1))) out.push(f);
         expect(out).toHaveLength(1);
-        expect(out[0]?.type).toBe(QuicFrameType.CRYPTO);
-        expect(out[0]).toMatchObject({ offset: 10n });
-        expect(Array.from(out[0]!.data)).toEqual([1, 2, 3, 4]);
+        const [crypto] = out;
+        if (crypto?.type !== QuicFrameType.CRYPTO) {
+            throw new Error(`expected a CRYPTO frame, got type ${String(crypto?.type)}`);
+        }
+        expect(crypto).toMatchObject({ offset: 10n });
+        expect(Array.from(crypto.data)).toEqual([1, 2, 3, 4]);
     });
 
     it("parses frames split across arbitrary 2-byte chunks", async () => {
@@ -409,7 +421,9 @@ describe("decodeFrame unknown types", () => {
         const readVarint = async (): Promise<bigint> => vars[vi++]!;
         const readBytes = async (_n: bigint): Promise<Uint8Array> => new Uint8Array([0x77]);
         const f = await decodeFrame(0x0an, readVarint, readBytes);
-        expect(f.type).toBe(QuicFrameType.STREAM);
+        if (f.type !== QuicFrameType.STREAM) {
+            throw new Error(`expected a STREAM frame, got type ${String(f.type)}`);
+        }
         expect(f).toMatchObject({ streamId: 8n, offset: 0n, fin: false });
         expect(Array.from(f.data)).toEqual([0x77]);
     });

@@ -15,8 +15,8 @@
 
 import { describe, it, expect } from "vitest";
 import { connectQuic } from "../src/connection.js";
-import { EMPTY_CONNECTION_ID } from "../src/types.js";
-import { createFakeDatagramPair, PEER_ADDR, testCryptoProvider, testEventProvider } from "./fake-transport.js";
+import { EMPTY_CONNECTION_ID, type QuicConnection } from "../src/types.js";
+import { createFakeDatagramPair, PEER_ADDR, testCryptoProvider, testEventProvider, type FakeDatagramTransport } from "./fake-transport.js";
 
 const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -63,9 +63,9 @@ function handshakeResult(
 }
 
 function makeConn(): {
-    conn: ReturnType<typeof connectQuic>;
-    client: ReturnType<ReturnType<typeof createFakeDatagramPair>["client"]["constructor"]>;
-    server: ReturnType<ReturnType<typeof createFakeDatagramPair>["server"]["constructor"]>;
+    conn: Promise<QuicConnection>;
+    client: FakeDatagramTransport;
+    server: FakeDatagramTransport;
 } {
     const { client, server } = createFakeDatagramPair();
     const conn = connectQuic({

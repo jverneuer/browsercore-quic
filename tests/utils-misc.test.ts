@@ -205,14 +205,14 @@ describe("encodeTransportParameters — edge cases", () => {
         const expected = concatAll([encodeVarint(300n), encodeVarint(1n), new Uint8Array([0x01])]);
         expect(encoded).toEqual(expected);
         // Sanity: first byte has the 2-byte prefix.
-        expect(encoded[0] >> 6).toBe(0b01);
+        expect((encoded[0] ?? 0) >> 6).toBe(0b01);
     });
 
     it("encodes a parameter whose id requires a 4-byte varint (id >= 2^14)", () => {
         // id 20000 exceeds the 14-bit 2-byte range → 4-byte varint.
         const id = 20_000;
         const encoded = encodeTransportParameters(wire([[id, new Uint8Array([0x01])]]));
-        expect(encoded[0] >> 6).toBe(0b10);
+        expect((encoded[0] ?? 0) >> 6).toBe(0b10);
         // Round-trip via decode.
         const decoded = decodeTransportParameters(encoded);
         expect(decoded.get(id)).toEqual(new Uint8Array([0x01]));

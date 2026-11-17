@@ -14,11 +14,10 @@ import { createStreamManager } from "../src/stream/stream.js";
 import {
     QuicFrameType,
     type QuicFrame,
-    type QuicSignalSink,
     type QuicStream,
     type QuicTransportParameters,
 } from "../src/types.js";
-import { ResetStreamError, StopSendingError } from "../src/errors.js";
+import { ResetStreamError } from "../src/errors.js";
 
 type Manager = ReturnType<typeof createStreamManager>;
 

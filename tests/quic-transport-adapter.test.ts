@@ -8,7 +8,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { QuicStream, StreamId, CloseReason } from "../src/types.js";
+import type { QuicStream, StreamId } from "../src/types.js";
+import type { CloseReason } from "@browsercore/transport";
 import { QuicTransportAdapter, adaptQuicStreamToTransport } from "../src/handshake/quic-transport-adapter.js";
 import { testEventProvider } from "./fake-transport.js";
 
@@ -93,6 +94,15 @@ class FakeQuicStream implements QuicStream {
 
 function makeStreamId(value: number): StreamId {
     return BigInt(value) as StreamId;
+}
+
+/** The nth recorded write, failing loudly when the test's premise breaks. */
+function writtenAt(stream: FakeQuicStream, index: number): Uint8Array {
+    const chunk = stream.written[index];
+    if (chunk === undefined) {
+        throw new Error(`expected a write at index ${index}, got ${stream.written.length}`);
+    }
+    return chunk;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +231,7 @@ describe("QuicTransportAdapter", () => {
             await adapter.write(data);
 
             expect(stream.written).toHaveLength(1);
-            expect(Array.from(stream.written[0])).toEqual([0xde, 0xad, 0xbe, 0xef]);
+            expect(Array.from(writtenAt(stream, 0))).toEqual([0xde, 0xad, 0xbe, 0xef]);
         });
 
         it("forwards multiple writes in order", async () => {
@@ -233,9 +243,9 @@ describe("QuicTransportAdapter", () => {
             await adapter.write(new Uint8Array([3]));
 
             expect(stream.written).toHaveLength(3);
-            expect(Array.from(stream.written[0])).toEqual([1]);
-            expect(Array.from(stream.written[1])).toEqual([2]);
-            expect(Array.from(stream.written[2])).toEqual([3]);
+            expect(Array.from(writtenAt(stream, 0))).toEqual([1]);
+            expect(Array.from(writtenAt(stream, 1))).toEqual([2]);
+            expect(Array.from(writtenAt(stream, 2))).toEqual([3]);
         });
 
         it("rejects writes after close", async () => {
@@ -284,7 +294,7 @@ describe("QuicTransportAdapter", () => {
             const stream = new FakeQuicStream(makeStreamId(0));
             const adapter = new QuicTransportAdapter(stream, testEventProvider());
 
-            const reason: CloseReason = { kind: "normal" };
+            const reason: CloseReason = { kind: "client_close" };
             await adapter.close(reason);
 
             expect(stream.isClosed).toBe(true);

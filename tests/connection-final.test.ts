@@ -23,13 +23,12 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { DeterministicRandom } from "@browsercore/transport";
-import { connectQuic } from "../src/connection.js";
+import { connectQuic, QuicConnectionImpl } from "../src/connection.js";
 import {
     EMPTY_CONNECTION_ID,
     LongPacketType,
     QuicFrameType,
     serializeFrame,
-    readFrames,
     serializeShortHeader,
     serializeLongHeader,
     concatAll,
@@ -75,9 +74,26 @@ vi.mock("../src/handshake/quic-handshake.js", async (importOriginal) => {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Typed view of the private members these coverage tests drive directly
+ * (handshakeResult installation, key-phase forcing, shutdown guards). The
+ * structural cast states exactly which internals are touched — no stringly
+ * record access.
+ */
+interface ConnectionInternals {
+    handshakeResult: QuicHandshakeResult | undefined;
+    outboundKeyPhase: "initial" | "handshake" | "application";
+    flush(): Promise<void>;
+    getProtectionSecrets(phase: "initial" | "handshake" | "application"): QuicPhaseSecrets | undefined;
+    onPeerClose(errorCode: bigint, reason: string): Promise<void>;
+    _handleFatal(err: Error): void;
+    _teardown(reason: { kind: "client_close" } | { kind: "remote_close" } | { kind: "error"; error: Error }): Promise<void>;
+    classifyKeyPhase(data: Uint8Array): "initial" | "handshake" | "application";
+}
+
 /** Loose accessor for private methods/fields used only to drive coverage. */
-function internals(conn: { readonly id: string }): Record<string, (...args: never[]) => unknown> {
-    return conn as unknown as Record<string, (...args: never[]) => unknown>;
+function internals(conn: QuicConnectionImpl): ConnectionInternals {
+    return conn as unknown as ConnectionInternals;
 }
 
 /** Build protection secrets (key, iv, hp) for one direction at one phase. */
@@ -118,11 +134,13 @@ function fakeResult(
 }
 
 function makeConn(random?: DeterministicRandom): {
-    conn: Promise<ReturnType<typeof connectQuic> extends Promise<infer C> ? C : never>;
+    conn: Promise<QuicConnectionImpl>;
     client: FakeDatagramTransport;
     server: FakeDatagramTransport;
 } {
     const { client, server } = createFakeDatagramPair();
+    // `random` is only included when supplied — exactOptionalPropertyTypes
+    // forbids passing an explicit `undefined` for an optional field.
     const conn = connectQuic({
         transport: client,
         peer: PEER_ADDR,
@@ -130,24 +148,27 @@ function makeConn(random?: DeterministicRandom): {
         initialDcid: EMPTY_CONNECTION_ID,
         initialScid: EMPTY_CONNECTION_ID,
         skipHandshake: true,
-        random,
+        ...(random !== undefined ? { random } : {}),
         events: testEventProvider(),
         crypto: testCryptoProvider(),
     });
-    return { conn: conn as Promise<ReturnType<typeof connectQuic> extends Promise<infer C> ? C : never>, client, server };
+    // connectQuic is declared to resolve the QuicConnection interface but
+    // always returns the concrete impl; these tests use impl-only surface
+    // (toWireParameters + the internals view below).
+    return { conn: conn as Promise<QuicConnectionImpl>, client, server };
 }
 
 /** Install a handshakeResult on a connection, overriding the private field. */
-function installHandshakeResult(conn: { readonly id: string }, result: QuicHandshakeResult): void {
-    (internals(conn) as { handshakeResult: QuicHandshakeResult }).handshakeResult = result;
+function installHandshakeResult(conn: QuicConnectionImpl, result: QuicHandshakeResult): void {
+    internals(conn).handshakeResult = result;
 }
 
 /** Override the outbound key phase (private field) for short-header tests. */
 function setOutboundKeyPhase(
-    conn: { readonly id: string },
+    conn: QuicConnectionImpl,
     phase: "initial" | "handshake" | "application",
 ): void {
-    (internals(conn) as { outboundKeyPhase: "initial" | "handshake" | "application" }).outboundKeyPhase = phase;
+    internals(conn).outboundKeyPhase = phase;
 }
 
 /**
@@ -200,7 +221,7 @@ describe("public getters + private helpers (328, 344, 372, 524)", () => {
         const { conn } = makeConn();
         const c = await conn;
         // handshakeResult is undefined here -> the undefined branch fires.
-        const secrets = internals(c).getProtectionSecrets("initial") as unknown;
+        const secrets = internals(c).getProtectionSecrets("initial");
         expect(secrets).toBeUndefined();
         await c.close(0n, "done");
     });
@@ -240,8 +261,9 @@ describe("performHandshake + connectQuic non-skip path (537-552, 1081-1083)", ()
     it("runs performHandshake, sets handshakeResult, and advances outboundKeyPhase to application", async () => {
         const { client, server } = createFakeDatagramPair();
         // skipHandshake omitted -> connectQuic awaits performHandshake(), which
-        // calls the mocked runQuicHandshake and resolves immediately.
-        const c = await connectQuic({
+        // calls the mocked runQuicHandshake and resolves immediately. Declared
+        // to resolve QuicConnection; the internals view below needs the impl.
+        const c = (await connectQuic({
             transport: client,
             peer: PEER_ADDR,
             serverName: "example.com",
@@ -250,13 +272,10 @@ describe("performHandshake + connectQuic non-skip path (537-552, 1081-1083)", ()
             random: new DeterministicRandom(0xface),
             events: testEventProvider(),
             crypto: testCryptoProvider(),
-        });
+        })) as QuicConnectionImpl;
 
         // performHandshake assigned handshakeResult and set outboundKeyPhase.
-        const i = internals(c) as {
-            handshakeResult: QuicHandshakeResult | undefined;
-            outboundKeyPhase: string;
-        };
+        const i = internals(c);
         expect(i.handshakeResult).toBeDefined();
         expect(i.outboundKeyPhase).toBe("application");
 
@@ -279,7 +298,7 @@ describe("shutdown closed-guards (575, 930, 940)", () => {
         await c.close(0n, "first"); // closed = true
         // A second peer close must hit the `if (this.closed) return` guard and
         // resolve without re-entering teardown.
-        await expect(internals(c).onPeerClose(7n, "late") as Promise<void>).resolves.toBeUndefined();
+        await expect(internals(c).onPeerClose(7n, "late")).resolves.toBeUndefined();
     });
 
     it("_handleFatal is a no-op once the connection is already closed (930)", async () => {
@@ -296,7 +315,7 @@ describe("shutdown closed-guards (575, 930, 940)", () => {
         await c.close(0n, "first");
         // A second teardown resolves via the `if (this.closed) return` guard.
         await expect(
-            internals(c)._teardown({ kind: "error", error: new Error("late") }) as Promise<void>,
+            internals(c)._teardown({ kind: "error", error: new Error("late") }),
         ).resolves.toBeUndefined();
     });
 });
@@ -372,7 +391,7 @@ describe("dispatchDatagram protected path — plaintext fallback (598-647, 696-8
     it("classifyKeyPhase returns application for an empty buffer (704-705)", async () => {
         const { conn } = makeConn();
         const c = await conn;
-        const phase = internals(c).classifyKeyPhase(new Uint8Array(0)) as string;
+        const phase = internals(c).classifyKeyPhase(new Uint8Array(0));
         expect(phase).toBe("application");
         await c.close(0n, "done");
     });

@@ -1,0 +1,20 @@
+{
+    // Dual typecheck gate (run by `npm run typecheck`): compiles src/ AND the
+    // tests so the suite is enforced by CI, not just by vitest's transpile-only
+    // run.
+    //
+    // `exclude` is OVERRIDDEN here on purpose: it is inherited from
+    // ./tsconfig.json, whose exclude list drops "tests" — without this
+    // override the `include` below would match nothing and the gate would
+    // silently typecheck zero test files.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "declaration": false,
+        "declarationMap": false,
+        "sourceMap": false,
+        "rootDir": "."
+    },
+    "include": ["src/**/*.ts", "tests/**/*.ts"],
+    "exclude": ["node_modules", "dist"]
+}
