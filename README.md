@@ -2,9 +2,7 @@
 
 
 [![npm version](https://img.shields.io/npm/v/@browsercore/quic)](https://www.npmjs.com/package/@browsercore/quic)
-[![coverage](https://img.shields.io/endpoint?url=https://jverneuer.github.io/browsercore-quic/badge.json)](https://jverneuer.github.io/browsercore-quic/COVERAGE.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/jverneuer/browsercore-quic/ci.yml?label=ci)](https://github.com/jverneuer/browsercore-quic/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/@browsercore/quic.svg)](LICENSE)
 
 QUIC transport (RFC 9000): packet headers, frames, packet protection, streams,
 and connection lifecycle over a datagram (UDP) transport.
