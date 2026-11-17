@@ -54,6 +54,7 @@ export { VARINT_MAX } from "./frame/varint.js";
 
 export {
     type BaseQuicFrame,
+    type ClientHelloConfig,
     type Clock,
     type ConnectionId,
     type DatagramCloseReason,
@@ -65,9 +66,8 @@ export {
     type StreamId,
     type StreamState,
     type StreamCloseReason,
+    type TlsHandshakeEngine,
     type UdpAddress,
-    type ClientHelloConfigLike,
-    type ProtocolVersionLike,
 } from "./types.js";
 
 export {

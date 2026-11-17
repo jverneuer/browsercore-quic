@@ -1,7 +1,9 @@
 /**
  * QUIC TLS handshake orchestration (RFC 9001 §4, §8).
  *
- * Runs the @browsercore/tls 1.3 handshake over a QUIC bidirectional stream
+ * Drives an injected TLS 1.3 handshake engine (the contracts
+ * `TlsHandshakeEngine`, implemented by @browsercore/tls and wired in by the
+ * composition root — or a fake in tests) over a QUIC bidirectional stream
  * (stream 0), capturing the TLS traffic secrets at each key phase so the QUIC
  * layer can derive its packet-protection keys (RFC 9001 §5.1). The three key
  * phases map to QUIC key phases:
@@ -10,31 +12,37 @@
  *   TLS handshake traffic secrets (c/s hs)        → QUIC handshake keys
  *   TLS application traffic secrets (c/s ap)      → QUIC application (1-RTT) keys
  *
- * The @browsercore/tls `runHandshake` returns only the final
- * `ApplicationTrafficSecrets`, but the `HandshakeContext` it mutates holds the
- * intermediate secrets (clientHsTrafficSecret, serverHsTrafficSecret,
- * masterSecret). We implement `HandshakeContext` so we can read them after the
- * handshake completes, then derive the QUIC packet-protection secrets.
+ * The engine's `runHandshake` returns only the final
+ * `ApplicationTrafficSecrets`, but the `TlsHandshakeContext` it mutates holds
+ * the intermediate secrets (clientHsTrafficSecret, serverHsTrafficSecret,
+ * masterSecret). We implement `TlsHandshakeContext` so we can read them after
+ * the handshake completes, then derive the QUIC packet-protection secrets.
+ *
+ * No-hard-wires invariant (replaceability audit 2026-11-16, remediation
+ * item #2): this module never imports @browsercore/tls statically. Every
+ * engine operation (`runHandshake`, `generateKeyShares`, `cipherSuiteToAead`)
+ * is called ONLY through the injected engine instance; when no engine is
+ * injected, `loadDefaultHandshakeEngine` supplies one via a single dynamic
+ * import (deprecated back-compat default).
  */
 
-import type { CryptoProvider } from "@browsercore/contracts";
+import type {
+    AeadAlgorithm,
+    AlertLevel,
+    Certificate,
+    CipherSuite,
+    ClientHelloConfig,
+    CryptoProvider,
+    HandshakePhase,
+    KeyPair,
+    ServerHello,
+    TlsHandshakeContext,
+    TlsHandshakeEngine,
+    TrafficSecrets,
+} from "@browsercore/contracts";
 import { SHA_256, type HashId } from "@browsercore/crypto";
 
 import type { Transport } from "@browsercore/transport";
-import {
-    generateKeyShares,
-    cipherSuiteToAead,
-    runHandshake,
-    type AeadAlgorithm,
-    type CipherSuite,
-    type ClientHelloConfig,
-    type ServerHello,
-    type Certificate,
-    type TrafficSecrets,
-    type HandshakeContext,
-    type HandshakePhase,
-    type AlertLevel,
-} from "@browsercore/tls";
 import {
     deriveInitialSecrets,
     deriveQuicSecrets,
@@ -42,6 +50,34 @@ import {
     type QuicProtectionSecrets,
 } from "../crypto/key-derivation.js";
 import { hashLengthFor } from "../crypto/hash-length.js";
+import { TlsHandshakeError } from "../errors.js";
+
+// ---------------------------------------------------------------------------
+// Deprecated dynamic default engine (back-compat; the only tls touchpoint)
+// ---------------------------------------------------------------------------
+
+/**
+ * Memoized dynamic default for `QuicOptions.handshakeEngine`.
+ *
+ * DEPRECATED (quic 0.2.7): composition roots (browsersmith 0.0.19 on) inject
+ * the engine explicitly via `QuicOptions.handshakeEngine`. This loader is the
+ * ONLY remaining touchpoint on @browsercore/tls — ONE dynamic import wrapping
+ * the package's three exported functions into the contracts
+ * `TlsHandshakeEngine` shape (never engine internals) — and it exists solely
+ * so 0.2.x callers that do not inject keep working unchanged. Once browsersmith
+ * injects everywhere, this fallback and the tls dependency can be deleted.
+ */
+let defaultEnginePromise: Promise<TlsHandshakeEngine> | undefined;
+
+/** @deprecated Inject `QuicOptions.handshakeEngine` instead. */
+function loadDefaultHandshakeEngine(): Promise<TlsHandshakeEngine> {
+    defaultEnginePromise ??= import("@browsercore/tls").then((tls) => ({
+        runHandshake: tls.runHandshake,
+        generateKeyShares: tls.generateKeyShares,
+        cipherSuiteToAead: tls.cipherSuiteToAead,
+    }));
+    return defaultEnginePromise;
+}
 
 /** A QUIC key phase — maps to the TLS secrets that feed QUIC's key derivation. */
 export type QuicKeyPhase = "initial" | "handshake" | "application";
@@ -84,11 +120,12 @@ export interface QuicHandshakeResult {
 }
 
 /**
- * A minimal HandshakeContext implementation that delegates to @browsercore/tls's
- * `runHandshake` and captures the intermediate traffic secrets for QUIC key
- * derivation.
+ * A minimal `TlsHandshakeContext` implementation (the consumer-side SPI from
+ * @browsercore/contracts) that the injected handshake engine mutates while
+ * driving the TLS 1.3 handshake, capturing the intermediate traffic secrets
+ * for QUIC key derivation.
  */
-export class QuicHandshakeContext implements HandshakeContext {
+export class QuicHandshakeContext implements TlsHandshakeContext {
     public readonly transport: Transport;
     public readonly crypto: CryptoProvider;
     /**
@@ -132,7 +169,7 @@ export class QuicHandshakeContext implements HandshakeContext {
      * Send a TLS alert (RFC 8446 §6). Intentionally a no-op: QUIC signals
      * transport-level errors via CONNECTION_CLOSE frames (RFC 9001 §4.8), not
      * TLS alerts, so this path is never reached in a QUIC handshake. The stub
-     * satisfies the {@link HandshakeContext} interface.
+     * satisfies the {@link TlsHandshakeContext} interface.
      */
     public async sendAlert(_level: AlertLevel, _description: number): Promise<void> {
         // No-op — QUIC owns error signalling at the transport layer.
@@ -141,13 +178,17 @@ export class QuicHandshakeContext implements HandshakeContext {
 
 /**
  * Map a TLS cipher suite to its AEAD algorithm name.
- * (Local copy — @browsercore/tls exports cipherSuiteToAead but we want to avoid
- * a dependency on the exact export path.)
+ *
+ * The four QUIC-negotiable AEAD suites (RFC 9001) map locally so the function
+ * works with ANY injected engine; every other suite (TLS 1.2 suites, GREASE)
+ * delegates to the injected engine's exhaustive `cipherSuiteToAead`. Without an
+ * engine at hand the exotic branch cannot resolve and fails loudly instead of
+ * reaching into a protocol package.
  */
-// Lenient by design: QUIC only negotiates AEAD cipher suites, but the TLS
-// handshake may report others. Known QUIC suites map explicitly; everything
-// else falls back to @browsercore/tls's mapping (which is itself exhaustive).
-export function mapCipherSuite(cipherSuite: CipherSuite): AeadAlgorithm {
+export function mapCipherSuite(
+    cipherSuite: CipherSuite,
+    engine?: Pick<TlsHandshakeEngine, "cipherSuiteToAead">,
+): AeadAlgorithm {
     // oxlint-disable-next-line typescript/switch-exhaustiveness-check -- intentional fallback for non-AEAD suites
     switch (cipherSuite) {
         case "TLS_AES_128_GCM_SHA256":
@@ -159,7 +200,12 @@ export function mapCipherSuite(cipherSuite: CipherSuite): AeadAlgorithm {
         case "TLS_CHACHA20_POLY1305_SHA256":
             return "CHACHA20-POLY1305";
         default:
-            return cipherSuiteToAead(cipherSuite);
+            if (engine === undefined) {
+                throw new TlsHandshakeError(
+                    `mapping non-QUIC cipher suite ${cipherSuite} to an AEAD — no handshake engine injected`,
+                );
+            }
+            return engine.cipherSuiteToAead(cipherSuite);
     }
 }
 
@@ -210,6 +256,11 @@ export function cipherSuiteKeyLength(cipherSuite: CipherSuite): number {
  * @param cryptoProvider Cryptographic provider for the QUIC key schedule
  *                       (RFC 9001). Injected via QuicOptions.crypto or
  *                       QuicOptions.platform.crypto.provider — required.
+ * @param engine         Injected TLS handshake engine (contracts
+ *                       `TlsHandshakeEngine`). When omitted, the deprecated
+ *                       dynamic @browsercore/tls default is loaded — inject
+ *                       `QuicOptions.handshakeEngine` from the composition
+ *                       root instead.
  */
 export async function runQuicHandshake(
     transport: Transport,
@@ -219,7 +270,13 @@ export async function runQuicHandshake(
     trustAnchors: readonly Uint8Array[] = [],
     clockNow: number = Math.floor(Date.now() / 1000),
     cryptoProvider: CryptoProvider,
+    engine?: TlsHandshakeEngine,
 ): Promise<QuicHandshakeResult> {
+    // Resolve the engine: injected instance, else the deprecated dynamic
+    // @browsercore/tls default (the only code path that touches tls at all).
+    // oxlint-disable-next-line typescript/no-deprecated -- this IS the back-compat seam: the deprecated default is used exactly here, only when no engine was injected
+    const tlsEngine = engine ?? (await loadDefaultHandshakeEngine());
+
     // --- Phase 0: derive initial QUIC secrets from the DCID (RFC 9001 §5.2) --
     const initial = deriveInitialSecrets(initialDcid, INITIAL_SALT_V1, SHA_256, cryptoProvider);
     const initialKeyLen = 16; // AES-128-GCM is the QUIC v1 default
@@ -233,12 +290,12 @@ export async function runQuicHandshake(
 
     // --- TLS handshake --------------------------------------------------------
     const ctx = new QuicHandshakeContext(transport, cryptoProvider);
-    await runHandshake(
+    await tlsEngine.runHandshake(
         ctx,
         profile,
         serverName,
         trustAnchors,
-        (groups) => generateKeyShares(groups, cryptoProvider),
+        (groups: readonly string[]): Promise<KeyPair[]> => tlsEngine.generateKeyShares(groups, cryptoProvider),
         clockNow,
     );
 
@@ -305,7 +362,7 @@ export async function runQuicHandshake(
 
     return {
         phases: [initialPhaseSecrets, handshakePhaseSecrets, applicationPhaseSecrets],
-        aead: mapCipherSuite(ctx.cipherSuite),
+        aead: mapCipherSuite(ctx.cipherSuite, tlsEngine),
         hash: ctx.hash === "SHA-384" ? "SHA-384" : "SHA-256",
         cipherSuite: ctx.cipherSuite,
         ...(ctx.alpnProtocol === undefined ? {} : { alpnProtocol: ctx.alpnProtocol }),
