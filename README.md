@@ -6,7 +6,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/jverneuer/browsercore-quic/ci.yml?label=ci)](https://github.com/jverneuer/browsercore-quic/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/@browsercore/quic.svg)](LICENSE)
 
-QUIC transport (RFC 9000) — packet headers, frames, packet protection, streams,
+QUIC transport (RFC 9000): packet headers, frames, packet protection, streams,
 and connection lifecycle over a datagram (UDP) transport.
 
 ## Responsibility
@@ -14,13 +14,13 @@ and connection lifecycle over a datagram (UDP) transport.
 Packet header parse/serialization (long + short headers), the full QUIC frame
 set (RFC 9000 §12), variable-length integer encoding (RFC 9000 §16), per-stream
 state machines, receive reassembly, and flow control (connection + stream
-level). The package knows nothing about HTTP/3, TLS, or sockets — it composes
+level). The package knows nothing about HTTP/3, TLS, or sockets. It composes
 exclusively over an injected `DatagramTransport` and `@browsercore/crypto`.
 
 ## What it does NOT know about
 
 - HTTP/3, QPACK, or any application protocol
-- TLS 1.3 handshake internals — the handshake runs through an injected
+- TLS 1.3 handshake internals: the handshake runs through an injected
   `TlsHandshakeEngine` (see below); quic never imports a protocol package
   directly (key derivation lives in `@browsercore/crypto`)
 - UDP, DNS, or sockets
@@ -29,7 +29,7 @@ exclusively over an injected `DatagramTransport` and `@browsercore/crypto`.
 Higher layers compose exclusively through the `QuicConnection` interface. A
 future `@browsercore/http3` opens bidirectional + unidirectional QUIC streams
 and never touches QUIC internals. The production UDP transport **never** calls
-`node:dgram` directly — it implements `DatagramTransport`, so the backend is
+`node:dgram` directly. It implements `DatagramTransport`, so the backend is
 replaceable (a test double, a `node:dgram` adapter, a mock).
 
 ## Public API
@@ -127,7 +127,7 @@ composition root:
 | --- | --- |
 | `crypto` | `platform.crypto.provider` |
 | `events` | `platform.events` |
-| `clock` | `platform.time` (a `Clock` itself — `Time` ≡ `Clock` since contracts 0.2.6) |
+| `clock` | `platform.time` (a `Clock` itself; `Time` ≡ `Clock` since contracts 0.2.6) |
 
 Individual fields always take precedence, so existing callers that pass
 `crypto`/`events`/`clock` directly keep working unchanged. This is the migration path
@@ -140,14 +140,14 @@ protocol package. See `@browsercore/contracts` for the `Platform` interface.
 Per the no-hard-wires invariant ("protocol packages must never import each
 other directly; all inter-package communication flows through Platform
 interfaces in `@browsercore/contracts`"), quic drives the TLS 1.3 handshake
-(RFC 9001 §4) through the contracts `TlsHandshakeEngine` interface —
-`runHandshake` / `generateKeyShares` / `cipherSuiteToAead` — never through a
+(RFC 9001 §4) through the contracts `TlsHandshakeEngine` interface,
+`runHandshake` / `generateKeyShares` / `cipherSuiteToAead`, never through a
 direct dependency on `@browsercore/tls`. Every type crossing the seam
 (`TlsHandshakeContext`, `ClientHelloConfig`, `ServerHello`, `TrafficSecrets`,
 `CipherSuite`, …) comes from `@browsercore/contracts` as well.
 
 **Composition-root wiring** (the pattern every `browsersmith` 0.0.19+ caller
-uses): the root imports the concrete engine once and injects it — quic only
+uses): the root imports the concrete engine once and injects it, and quic only
 ever sees the interface.
 
 ```ts
@@ -160,7 +160,7 @@ const conn = await connectQuic({
 });
 ```
 
-**Deprecation note — the dynamic default.** When `handshakeEngine` is omitted,
+**Deprecation note: the dynamic default.** When `handshakeEngine` is omitted,
 the handshake falls back to ONE dynamic `import("@browsercore/tls")` wrapping
 the package's three exported functions into the engine object
 (`loadDefaultHandshakeEngine` in `src/handshake/quic-handshake.ts`). That
@@ -171,14 +171,14 @@ explicitly. Engine internals are never reached.
 **Canonical Clock.** `QuicOptions.clock` and `platform.time` are the canonical
 `Clock` from `@browsercore/contracts` (`now` / `monotonic` / `sleep` /
 `setTimeout` / `clearTimeout`). The handshake's certificate-validity time is
-read from the resolved clock — `Math.floor(clock.now() / 1000)` — never from
+read from the resolved clock (`Math.floor(clock.now() / 1000)`), never from
 `Date.now()` directly, so cert-time behavior is deterministic under an
 injected fake clock.
 
 **Testing with a fake engine.** The sanctioned swap pattern (the same
 structural-implementation approach as http3's `fake-quic` compatibility test)
 is a local fake `TlsHandshakeEngine` that mutates the handshake context the
-way a completed handshake would — see
+way a completed handshake would. See
 `tests/handshake-engine-injection.test.ts`, which drives a full `connectQuic`
 handshake with the engine injected and asserts the deprecated dynamic
 `@browsercore/tls` fallback import is never taken.
@@ -192,7 +192,7 @@ handshake with the engine injected and asserts the deprecated dynamic
 
 ## Contributing
 
-Contributions are welcome — bug reports, reproductions, docs and code alike. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the full guide lives in the [browsersmith repo](https://github.com/jverneuer/browsersmith/blob/main/CONTRIBUTING.md). First timer? Check the [`good first issue`](https://github.com/jverneuer/browsercore-quic/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label. Security issues: [SECURITY.md](SECURITY.md), never a public issue.
+Contributions are welcome: bug reports, reproductions, docs and code alike. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the full guide lives in the [browsersmith repo](https://github.com/jverneuer/browsersmith/blob/main/CONTRIBUTING.md). First timer? Check the [`good first issue`](https://github.com/jverneuer/browsercore-quic/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label. Security issues: [SECURITY.md](SECURITY.md), never a public issue.
 
 ## License
 
