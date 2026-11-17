@@ -81,7 +81,7 @@ describe("deriveInitialSecrets (RFC 9001 §5.2)", () => {
     it("derives different secrets for different salts", () => {
         const dcid = new Uint8Array([0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]);
         const saltB = new Uint8Array(INITIAL_SALT_V1);
-        saltB[0] ^= 0x01; // flip one bit
+        saltB[0] = (saltB[0] ?? 0) ^ 0x01; // flip one bit
         const a = deriveInitialSecrets(dcid, INITIAL_SALT_V1, SHA_256, crypto);
         const b = deriveInitialSecrets(dcid, saltB, SHA_256, crypto);
         expect(Buffer.from(a.clientInitialSecret).equals(Buffer.from(b.clientInitialSecret))).toBe(false);

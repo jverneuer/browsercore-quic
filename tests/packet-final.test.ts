@@ -134,7 +134,10 @@ function bufferWithHole(backing: Uint8Array, holeIndex: number): Uint8Array {
                     return undefined;
                 }
                 if (typeof prop === "string" && invokeOnTarget.has(prop)) {
-                    const fn = target[prop];
+                    // Dynamic method lookup by name — a string-keyed view over
+                    // the TypedArray's own methods (which only accept numeric
+                    // indexes in the static type).
+                    const fn = (target as unknown as Record<string, unknown>)[prop];
                     return typeof fn === "function" ? fn.bind(target) : fn;
                 }
             }

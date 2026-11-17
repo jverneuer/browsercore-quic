@@ -24,11 +24,11 @@ import type { CryptoProvider } from "@browsercore/contracts";
 import type { Transport } from "@browsercore/transport";
 import type {
     ApplicationTrafficSecrets,
+    Certificate,
     CipherSuite,
     ClientHelloConfig,
     HandshakeContext,
 } from "@browsercore/tls";
-import type * as TlsModule from "@browsercore/tls";
 
 // ---------------------------------------------------------------------------
 // Mock @browsercore/tls so runHandshake simulates a completed TLS handshake.
@@ -44,7 +44,7 @@ let mockMasterSecret: Uint8Array = new Uint8Array(32).fill(0x33);
 let mockCipherSuite: CipherSuite = "TLS_AES_128_GCM_SHA256";
 let mockHash: HashId = SHA_256;
 let mockAlpn: string | undefined = "h3";
-let mockPeerCertificate: unknown;
+let mockPeerCertificate: Certificate | undefined;
 
 // The mock's runHandshake signature mirrors the real one (minus the unused
 // args) so the implementation stays assignable to the mocked module.
@@ -58,7 +58,7 @@ type RunHandshakeMock = (
 ) => Promise<ApplicationTrafficSecrets>;
 
 vi.mock("@browsercore/tls", async (importOriginal) => {
-    const actual = await importOriginal<TlsModule>();
+    const actual = await importOriginal<typeof import("@browsercore/tls")>();
     const runHandshakeMock: RunHandshakeMock = (
         ctx,
         _profile,
@@ -98,7 +98,12 @@ vi.mock("@browsercore/tls", async (importOriginal) => {
 // Imports (after the mock is registered — vitest hoists vi.mock anyway).
 // ---------------------------------------------------------------------------
 
-import { runQuicHandshake, QuicHandshakeContext } from "../src/handshake/quic-handshake.js";
+import {
+    runQuicHandshake,
+    QuicHandshakeContext,
+    type QuicHandshakeResult,
+    type QuicPhaseSecrets,
+} from "../src/handshake/quic-handshake.js";
 import { deriveQuicSecrets, QUIC_IV_LENGTH } from "../src/crypto/key-derivation.js";
 
 /**
@@ -114,7 +119,7 @@ function runQuicHandshakeWithProvider(
     trustAnchors: readonly Uint8Array[] = [],
     clockNow: number = Math.floor(Date.now() / 1000),
     provider: CryptoProvider = crypto,
-): Promise<import("../src/handshake/quic-handshake.js").QuicHandshakeResult> {
+): Promise<QuicHandshakeResult> {
     return runQuicHandshake(transport, profile, serverName, initialDcid, trustAnchors, clockNow, provider);
 }
 
@@ -143,13 +148,47 @@ function fakeProfile(): ClientHelloConfig {
         extensionOrder: [],
         keyShareGroups: ["x25519"],
         signatureAlgorithms: ["ecdsa_secp256r1_sha256"],
-        supportedVersions: ["TLS 1.3"],
+        supportedVersions: [{ name: "TLS 1.3", wire: 0x0304 }],
         serverName: "example.com",
         grease: false,
     };
 }
 
 const INITIAL_DCID = new Uint8Array([0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]);
+
+/**
+ * A structurally valid Certificate — the handshake runner only forwards
+ * ctx.peerCertificate into the result, never parses it, so empty DER fields
+ * are fine; the type must still be honestly satisfied.
+ */
+function fakeCertificate(commonName: string): Certificate {
+    return {
+        tbsBytes: new Uint8Array(0),
+        subjectPublicKeyInfo: new Uint8Array(0),
+        subjectAltNames: [],
+        commonName,
+        notBefore: 0,
+        notAfter: 0,
+        keyUsageDigitalSignature: false,
+        keyUsageKeyEncipherment: false,
+        signatureScheme: "ecdsa_secp256r1_sha256",
+        signatureValue: new Uint8Array(0),
+        issuer: "CN=Test CA",
+        isCa: false,
+    };
+}
+
+/**
+ * The phase entry at `index`, failing loudly when the derivation-order premise
+ * of a test breaks (phases are always initial, handshake, application).
+ */
+function phaseAt(result: QuicHandshakeResult, index: number): QuicPhaseSecrets {
+    const phase = result.phases[index];
+    if (phase === undefined) {
+        throw new Error(`expected a phase entry at index ${index}`);
+    }
+    return phase;
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -164,7 +203,7 @@ describe("runQuicHandshake", () => {
         mockCipherSuite = "TLS_AES_128_GCM_SHA256";
         mockHash = SHA_256;
         mockAlpn = "h3";
-        mockPeerCertificate = null;
+        mockPeerCertificate = undefined;
     });
 
     afterEach(() => {
@@ -179,9 +218,9 @@ describe("runQuicHandshake", () => {
             INITIAL_DCID,
         );
         expect(result.phases).toHaveLength(3);
-        expect(result.phases[0].phase).toBe("initial");
-        expect(result.phases[1].phase).toBe("handshake");
-        expect(result.phases[2].phase).toBe("application");
+        expect(phaseAt(result, 0).phase).toBe("initial");
+        expect(phaseAt(result, 1).phase).toBe("handshake");
+        expect(phaseAt(result, 2).phase).toBe("application");
     });
 
     it("maps the negotiated cipher suite to the QUIC AEAD algorithm + hash", async () => {
@@ -234,11 +273,11 @@ describe("runQuicHandshake", () => {
         // The initial phase always uses a hardcoded 16-byte key (AES-128-GCM is
         // the QUIC v1 default for initial secrets, RFC 9001 §5.2). Only the
         // handshake + application phases use the negotiated key length.
-        const initial = result.phases[0];
+        const initial = phaseAt(result, 0);
         expect(initial.clientProtection.key.length).toBe(16);
         expect(initial.serverProtection.key.length).toBe(16);
 
-        for (const phase of [result.phases[1], result.phases[2]]) {
+        for (const phase of [phaseAt(result, 1), phaseAt(result, 2)]) {
             expect(phase.clientProtection.key.length).toBe(32);
             expect(phase.clientProtection.hp.length).toBe(32);
             expect(phase.clientProtection.iv.length).toBe(12);
@@ -287,27 +326,27 @@ describe("runQuicHandshake", () => {
         const resultB = await runQuicHandshakeWithProvider(fakeTransport(), fakeProfile(), "example.com", dcidB);
 
         // Initial phase secrets differ because the DCID feeds the initial salt derivation.
-        const initialA = resultA.phases[0];
-        const initialB = resultB.phases[0];
+        const initialA = phaseAt(resultA, 0);
+        const initialB = phaseAt(resultB, 0);
         expect(Buffer.from(initialA.clientTrafficSecret)
             .equals(Buffer.from(initialB.clientTrafficSecret))).toBe(false);
         expect(Buffer.from(initialA.serverTrafficSecret)
             .equals(Buffer.from(initialB.serverTrafficSecret))).toBe(false);
 
         // Handshake + application phases are identical (same mock traffic secrets).
-        expect(Array.from(resultA.phases[1].clientTrafficSecret))
-            .toEqual(Array.from(resultB.phases[1].clientTrafficSecret));
-        expect(Array.from(resultA.phases[2].clientTrafficSecret))
-            .toEqual(Array.from(resultB.phases[2].clientTrafficSecret));
+        expect(Array.from(phaseAt(resultA, 1).clientTrafficSecret))
+            .toEqual(Array.from(phaseAt(resultB, 1).clientTrafficSecret));
+        expect(Array.from(phaseAt(resultA, 2).clientTrafficSecret))
+            .toEqual(Array.from(phaseAt(resultB, 2).clientTrafficSecret));
     });
 
     it("is deterministic for the same DCID + traffic secrets", async () => {
         const a = await runQuicHandshakeWithProvider(fakeTransport(), fakeProfile(), "example.com", INITIAL_DCID);
         const b = await runQuicHandshakeWithProvider(fakeTransport(), fakeProfile(), "example.com", INITIAL_DCID);
-        expect(Array.from(a.phases[0].clientTrafficSecret))
-            .toEqual(Array.from(b.phases[0].clientTrafficSecret));
-        expect(Array.from(a.phases[0].clientProtection.key))
-            .toEqual(Array.from(b.phases[0].clientProtection.key));
+        expect(Array.from(phaseAt(a, 0).clientTrafficSecret))
+            .toEqual(Array.from(phaseAt(b, 0).clientTrafficSecret));
+        expect(Array.from(phaseAt(a, 0).clientProtection.key))
+            .toEqual(Array.from(phaseAt(b, 0).clientProtection.key));
     });
 
     it("includes the ALPN protocol when the server negotiates one", async () => {
@@ -334,7 +373,7 @@ describe("runQuicHandshake", () => {
     });
 
     it("forwards the peer certificate from the TLS handshake", async () => {
-        const cert = { subject: "CN=example.com", issuer: "CN=Test CA" };
+        const cert = fakeCertificate("CN=example.com");
         mockPeerCertificate = cert;
         const result = await runQuicHandshakeWithProvider(
             fakeTransport(),
@@ -368,7 +407,7 @@ describe("runQuicHandshake", () => {
             crypto,
         );
         // The derivation succeeds (produces correctly-sized keys) with the real provider.
-        expect(result.phases[0].clientProtection.key.length).toBe(16);
+        expect(phaseAt(result, 0).clientProtection.key.length).toBe(16);
     });
 
     it("installs the handshake traffic secrets from the context into the handshake phase", async () => {
@@ -382,7 +421,7 @@ describe("runQuicHandshake", () => {
             "example.com",
             INITIAL_DCID,
         );
-        const handshakePhase = result.phases[1];
+        const handshakePhase = phaseAt(result, 1);
         expect(Array.from(handshakePhase.clientTrafficSecret)).toEqual(Array.from(mockClientHsSecret));
         expect(Array.from(handshakePhase.serverTrafficSecret)).toEqual(Array.from(mockServerHsSecret));
     });
@@ -398,7 +437,7 @@ describe("runQuicHandshake", () => {
             "example.com",
             INITIAL_DCID,
         );
-        const appPhase = result.phases[2];
+        const appPhase = phaseAt(result, 2);
         // The application traffic secrets are derived from the master secret via
         // TLS 1.3 HKDF-Expand-Label ("c ap traffic" / "s ap traffic"), so they
         // must differ from the handshake traffic secrets (derived from the hs secrets).
@@ -430,8 +469,9 @@ describe("QuicHandshakeContext as a HandshakeContext implementation", () => {
         ctx.clientHsTrafficSecret = new Uint8Array(48).fill(0xaa);
         ctx.serverHsTrafficSecret = new Uint8Array(48).fill(0xbb);
         ctx.masterSecret = new Uint8Array(48).fill(0xcc);
+        const cert = fakeCertificate("CN=test");
         ctx.alpnProtocol = "h3";
-        ctx.peerCertificate = { subject: "CN=test" };
+        ctx.peerCertificate = cert;
 
         expect(ctx.cipherSuite).toBe("TLS_AES_256_GCM_SHA384");
         expect(ctx.aead).toBe("AES-256-GCM");
@@ -440,7 +480,7 @@ describe("QuicHandshakeContext as a HandshakeContext implementation", () => {
         expect(ctx.serverHsTrafficSecret.length).toBe(48);
         expect(ctx.masterSecret.length).toBe(48);
         expect(ctx.alpnProtocol).toBe("h3");
-        expect(ctx.peerCertificate).toEqual({ subject: "CN=test" });
+        expect(ctx.peerCertificate).toBe(cert);
     });
 });
 

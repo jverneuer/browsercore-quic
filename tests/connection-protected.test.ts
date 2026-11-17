@@ -19,7 +19,7 @@
 
 import { describe, it, expect } from "vitest";
 import { DeterministicRandom } from "@browsercore/transport";
-import { connectQuic } from "../src/connection.js";
+import { connectQuic, QuicConnectionImpl } from "../src/connection.js";
 import {
     EMPTY_CONNECTION_ID,
     type QuicHandshakeResult,
@@ -80,6 +80,7 @@ function fakeHandshakeResult(
  */
 function makeFailingCloseTransport(): DatagramTransport {
     return {
+        id: "failing-close-transport",
         send: (): Promise<void> => Promise.resolve(),
         recv: (): Promise<{ readonly data: Uint8Array; readonly from: UdpAddress }> =>
             new Promise(() => {}), // never resolves — parks the read loop
@@ -88,11 +89,13 @@ function makeFailingCloseTransport(): DatagramTransport {
 }
 
 function makeConn(random?: DeterministicRandom): {
-    conn: Awaited<ReturnType<typeof connectQuic>>;
+    conn: Promise<QuicConnectionImpl>;
     client: FakeDatagramTransport;
     server: FakeDatagramTransport;
 } {
     const { client, server } = createFakeDatagramPair();
+    // `random` is only included when supplied — exactOptionalPropertyTypes
+    // forbids passing an explicit `undefined` for an optional field.
     const conn = connectQuic({
         transport: client,
         peer: PEER_ADDR,
@@ -100,16 +103,19 @@ function makeConn(random?: DeterministicRandom): {
         initialDcid: EMPTY_CONNECTION_ID,
         initialScid: EMPTY_CONNECTION_ID,
         skipHandshake: true,
-        random,
+        ...(random !== undefined ? { random } : {}),
         events: testEventProvider(),
         crypto: testCryptoProvider(),
     });
-    return { conn: conn as Awaited<ReturnType<typeof connectQuic>>, client, server };
+    // connectQuic is declared to resolve the QuicConnection interface but
+    // always returns the concrete impl; these tests use impl-only surface
+    // (getCrypto + private handshakeResult/outboundKeyPhase views below).
+    return { conn: conn as Promise<QuicConnectionImpl>, client, server };
 }
 
 /** Install a handshakeResult on a connection, overriding the private field. */
 function installHandshakeResult(
-    conn: Awaited<ReturnType<typeof connectQuic>>,
+    conn: QuicConnectionImpl,
     result: QuicHandshakeResult,
 ): void {
     (conn as unknown as { handshakeResult: QuicHandshakeResult }).handshakeResult = result;
@@ -117,7 +123,7 @@ function installHandshakeResult(
 
 /** Override the outbound key phase (private field) for short-header tests. */
 function setOutboundKeyPhase(
-    conn: Awaited<ReturnType<typeof connectQuic>>,
+    conn: QuicConnectionImpl,
     phase: "initial" | "handshake" | "application",
 ): void {
     (conn as unknown as { outboundKeyPhase: "initial" | "handshake" | "application" }).outboundKeyPhase = phase;

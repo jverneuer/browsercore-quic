@@ -127,10 +127,10 @@ describe("FrameParseError", () => {
 
 describe("TransportParameterError", () => {
     it("records the offending parameter id", () => {
-        const err = new TransportParameterError(0x0fn);
+        const err = new TransportParameterError(0x0f);
         expect(err.name).toBe("TransportParameterError");
         expect(err.kind).toBe("TransportParameterError");
-        expect(err.parameter).toBe(0x0fn);
+        expect(err.parameter).toBe(0x0f);
         expect(err.message).toContain("0xf");
     });
 });
@@ -156,7 +156,7 @@ describe("error cause propagation", () => {
         expect(new ResetStreamError(0n, 0x01n, 42n, { cause }).cause).toBe(cause);
         expect(new FlowControlError(100n, 120n, undefined, { cause }).cause).toBe(cause);
         expect(new PacketParseError(9, { cause }).cause).toBe(cause);
-        expect(new TransportParameterError(0x0fn, { cause }).cause).toBe(cause);
+        expect(new TransportParameterError(0x0f, { cause }).cause).toBe(cause);
         expect(new HandshakeTimeoutError(10_000, { cause }).cause).toBe(cause);
     });
 });

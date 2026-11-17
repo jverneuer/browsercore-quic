@@ -264,7 +264,6 @@ describe("TLS handshake engine injection (contracts TlsHandshakeEngine)", () => 
     it("runQuicHandshake with an injected engine derives all three key phases without touching tls", async () => {
         const { record, engine } = freshEngine();
         const tlsLoadsBefore = tlsImport.loads;
-        const { client } = createFakeDatagramPair();
 
         const result = await runQuicHandshake(
             {

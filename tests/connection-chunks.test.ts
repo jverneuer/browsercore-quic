@@ -23,7 +23,7 @@
 
 import { describe, it, expect } from "vitest";
 import { DeterministicRandom } from "@browsercore/transport";
-import { connectQuic, QuicConnectionImpl } from "../src/connection.js";
+import { connectQuic } from "../src/connection.js";
 import {
     QuicFrameType,
     EMPTY_CONNECTION_ID,
@@ -589,8 +589,7 @@ describe("connection close lifecycle", () => {
         // The first CONNECTION_CLOSE tears the connection down; a second one must
         // hit onPeerClose's `if (this.closed) return` guard without re-entering
         // teardown.
-        const { conn, client, server } = makeConn();
-        const c = await conn;
+        const { client, server } = makeConn();
         const closeFrame = makePacket({
             type: QuicFrameType.CONNECTION_CLOSE,
             errorCode: 0x0cn,

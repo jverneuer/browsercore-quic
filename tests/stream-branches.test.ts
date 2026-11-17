@@ -228,6 +228,8 @@ describe("manager-level branches", () => {
 
     it("throws via assertNever on an unhandled frame type (line 673)", () => {
         const { manager } = makeManager();
-        expect(() => manager.dispatch({ type: 0xff } as QuicFrame)).toThrow(/Unexpected value/);
+        // Deliberately invalid variant — feeds the assertNever exhaustiveness
+        // guard, so the double cast is the point of the test.
+        expect(() => manager.dispatch({ type: 0xff } as unknown as QuicFrame)).toThrow(/Unexpected value/);
     });
 });

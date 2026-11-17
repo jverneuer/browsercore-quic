@@ -14,7 +14,6 @@ import {
     INITIAL_SALT_V1,
     QUIC_IV_LENGTH,
     type InitialSecrets,
-    type QuicProtectionSecrets,
 } from "../src/crypto/key-derivation.js";
 import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
 import { SHA_256, SHA_384 } from "@browsercore/crypto";

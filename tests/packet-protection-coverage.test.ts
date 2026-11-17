@@ -3,7 +3,6 @@ import {
     protectPayload,
     unprotectPayload,
     encryptPayload,
-    constructNonce,
     type QuicAead,
 } from "../src/packet/packet-protection.js";
 import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";

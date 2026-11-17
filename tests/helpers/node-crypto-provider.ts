@@ -8,8 +8,8 @@
  *
  * It implements only the primitives the QUIC unit tests exercise (randomness,
  * hashing, HKDF, HMAC, AES-GCM, ChaCha20-Poly1305, AES-ECB). The asymmetric
- * methods (X25519, ECDH, signature verification) are not touched by these
- * tests, so they throw rather than ship an out-of-scope implementation.
+ * methods (X25519, ECDH, ML-KEM, signature verification) are not touched by
+ * these tests, so they throw rather than ship an out-of-scope implementation.
  */
 
 import {
@@ -19,14 +19,19 @@ import {
     hkdfSync,
     createCipheriv,
     createDecipheriv,
+    type CipherGCM,
+    type DecipherGCM,
 } from "node:crypto";
 import type { CryptoProvider, HashId } from "@browsercore/contracts";
 
 /**
  * Run a node:crypto AEAD cipher over `data` with the given AAD, returning a
  * standalone copy (node returns Buffers that may view an internal pool).
+ *
+ * Every caller uses an AEAD mode (GCM or ChaCha20-Poly1305), which node types
+ * as `CipherGCM`/`DecipherGCM` — those carry `setAAD`/`update`/`final`.
  */
-function runAead(cipher: NodeJS.ReadWriteStream, data: Uint8Array, aad: Uint8Array): Uint8Array {
+function runAead(cipher: CipherGCM | DecipherGCM, data: Uint8Array, aad: Uint8Array): Uint8Array {
     cipher.setAAD(aad, { plaintextLength: data.length });
     const out = new Uint8Array(cipher.update(data));
     const final = new Uint8Array(cipher.final());
@@ -155,5 +160,19 @@ export const nodeCrypto: CryptoProvider = {
         result.set(out, 0);
         result.set(final, out.length);
         return result;
+    },
+    // ML-KEM (FIPS 203) joined the canonical CryptoProvider surface with the
+    // X25519MLKEM768 key exchange. The QUIC unit tests never run a real TLS
+    // handshake against this provider (the handshake is mocked or an engine is
+    // injected), so — matching the x25519/ecdh stubs above — these throw
+    // rather than ship an out-of-scope implementation.
+    mlkem768GenerateKeyPair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
+        throw new Error("mlkem768GenerateKeyPair not supported by test crypto provider");
+    },
+    mlkem768Decapsulate(_secretKey, _ciphertext): Uint8Array {
+        throw new Error("mlkem768Decapsulate not supported by test crypto provider");
+    },
+    x25519MLKEM768SharedSecret(_x25519SecretKey, _x25519PeerPublicKey, _mlkemSecretKey, _mlkemCiphertext): Uint8Array {
+        throw new Error("x25519MLKEM768SharedSecret not supported by test crypto provider");
     },
 };

@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as utils from "../src/utils.js";
-import { serializeFrame, decodeFrame, readFrames } from "../src/frame/frame.js";
+import { serializeFrame, readFrames } from "../src/frame/frame.js";
 import { QuicFrameType, type QuicFrame } from "../src/types.js";
 
 /** A reader that yields the whole buffer once, then null forever. */
@@ -29,10 +29,16 @@ async function decodeAll(bytes: Uint8Array): Promise<QuicFrame[]> {
     return out;
 }
 
-async function firstFrame(frame: QuicFrame): Promise<QuicFrame> {
+/**
+ * Serialize + re-decode a single frame, preserving its variant: the result is
+ * typed as the input frame's type (the round-trip invariant these tests
+ * assert — a decoder that surfaced a different variant would fail the
+ * expectations anyway).
+ */
+async function firstFrame<T extends QuicFrame>(frame: T): Promise<T> {
     const [f] = await decodeAll(serializeFrame(frame));
     if (f === undefined) throw new Error("no frame decoded");
-    return f;
+    return f as T;
 }
 
 describe("readVarintFromBuffer noUncheckedIndexedAccess guard (line 214)", () => {
@@ -106,7 +112,7 @@ describe("readBytes fill-failure branch (line 228)", () => {
 describe("ACK_ECN ack-range loop body (lines 299-302)", () => {
     it("decodes an ACK_ECN frame with one ack range (loop executes once)", async () => {
         const frame = {
-            type: QuicFrameType.ACK_ECN as const,
+            type: QuicFrameType.ACK_ECN,
             largestAck: 100n,
             ackDelay: 5n,
             ackRangeCount: 1n,
@@ -128,7 +134,7 @@ describe("ACK_ECN ack-range loop body (lines 299-302)", () => {
 
     it("decodes an ACK_ECN frame with multiple ack ranges (loop iterates multiple times)", async () => {
         const frame = {
-            type: QuicFrameType.ACK_ECN as const,
+            type: QuicFrameType.ACK_ECN,
             largestAck: 500n,
             ackDelay: 10n,
             ackRangeCount: 3n,

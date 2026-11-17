@@ -326,19 +326,19 @@ describe("FrameParseError", () => {
 
 describe("TransportParameterError", () => {
     it("constructs without a cause", () => {
-        const err = new TransportParameterError(0x0fn);
+        const err = new TransportParameterError(0x0f);
         expect(err).toBeInstanceOf(Error);
         expect(err).toBeInstanceOf(TransportParameterError);
         expect(err.name).toBe("TransportParameterError");
         expect(err.kind).toBe("TransportParameterError");
-        expect(err.parameter).toBe(0x0fn);
+        expect(err.parameter).toBe(0x0f);
         expect(err.cause).toBeUndefined();
         expect(err.message).toBe("Transport parameter error: parameter=0xf");
     });
 
     it("constructs with a cause", () => {
         const cause = new Error("unknown param");
-        const err = new TransportParameterError(0x01n as unknown as number, { cause });
+        const err = new TransportParameterError(0x01, { cause });
         expect(err.cause).toBe(cause);
     });
 
@@ -491,7 +491,10 @@ describe("PacketProtectionError", () => {
 describe("kind discriminators are unique across all error classes", () => {
     it("assigns a distinct literal kind to each class", () => {
         const cause = new Error("x");
-        const cases: Array<readonly [string, Error]> = [
+        // Every QUIC error class carries a `kind` discriminator — the shared
+        // shape the uniqueness check below relies on.
+        type KindedError = Error & { readonly kind: string };
+        const cases: Array<readonly [string, KindedError]> = [
             ["ConnectionClosedError", new ConnectionClosedError(0n, "r")],
             ["ConnectionClosingError", new ConnectionClosingError()],
             ["FlowControlError", new FlowControlError(1n, 2n)],
@@ -507,9 +510,9 @@ describe("kind discriminators are unique across all error classes", () => {
         ];
 
         // Every kind matches its class name, and no two kinds collide.
-        const kinds = cases.map(([, err]) => (err as { kind: string }).kind);
+        const kinds = cases.map(([, err]) => err.kind);
         for (const [name, err] of cases) {
-            expect((err as { kind: string }).kind).toBe(name);
+            expect(err.kind).toBe(name);
         }
         const unique = new Set(kinds);
         expect(unique.size).toBe(cases.length);

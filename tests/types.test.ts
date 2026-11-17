@@ -44,10 +44,10 @@ describe("firstStreamId", () => {
 
 describe("nextStreamId", () => {
     it("increments by 4 to stay within the same stream type", () => {
-        expect(nextStreamId(0n)).toBe(4n); // client bidi
-        expect(nextStreamId(1n)).toBe(5n); // server bidi
-        expect(nextStreamId(2n)).toBe(6n); // client uni
-        expect(nextStreamId(3n)).toBe(7n); // server uni
+        expect(nextStreamId(makeStreamId(0n))).toBe(4n); // client bidi
+        expect(nextStreamId(makeStreamId(1n))).toBe(5n); // server bidi
+        expect(nextStreamId(makeStreamId(2n))).toBe(6n); // client uni
+        expect(nextStreamId(makeStreamId(3n))).toBe(7n); // server uni
     });
 
     it("preserves the type bits across many increments", () => {

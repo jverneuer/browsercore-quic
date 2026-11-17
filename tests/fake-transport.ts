@@ -31,8 +31,8 @@ export function createFakeDatagramPair(): {
 } {
     const client = new FakeDatagramTransport("client", PEER_ADDR);
     const server = new FakeDatagramTransport("server", LOCAL_ADDR);
-    client._peer = server;
-    server._peer = client;
+    client.pairWith(server);
+    server.pairWith(client);
     return { client, server };
 }
 
@@ -84,7 +84,7 @@ export function testEventProvider(): EventProvider {
 
 export class FakeDatagramTransport implements DatagramTransport {
     public readonly id: string;
-    private readonly _peer: FakeDatagramTransport | undefined;
+    private _peer: FakeDatagramTransport | undefined;
     private readonly _localAddr: UdpAddress;
     private _closed = false;
     /** Datagrams sent by this side, buffered for the peer to recv(). */
@@ -96,6 +96,15 @@ export class FakeDatagramTransport implements DatagramTransport {
     public constructor(id: string, localAddr: UdpAddress, peer?: FakeDatagramTransport) {
         this.id = id;
         this._localAddr = localAddr;
+        this._peer = peer;
+    }
+
+    /**
+     * Point this side at its counterpart. A pair needs mutual references, which
+     * the constructor alone cannot express — this is the wiring seam
+     * `createFakeDatagramPair` uses.
+     */
+    public pairWith(peer: FakeDatagramTransport): void {
         this._peer = peer;
     }
 

@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { nodeCrypto as crypto } from "./helpers/node-crypto-provider.js";
-import type { CryptoProvider, HashId } from "@browsercore/crypto";
+import { SHA_256, SHA_384, type CryptoProvider, type HashId } from "@browsercore/crypto";
 import type { Transport } from "@browsercore/transport";
 import type { AeadAlgorithm, CipherSuite } from "@browsercore/tls";
 import {
@@ -210,7 +210,9 @@ describe("hashForCipherSuite", () => {
     });
 
     it("only returns one of the two valid HashId values", () => {
-        const validHashes: readonly HashId[] = ["SHA-256", "SHA-384"] as const;
+        // HashId is branded in @browsercore/crypto — the SHA_256/SHA_384
+        // constants are the canonical inhabitants of the union.
+        const validHashes: readonly HashId[] = [SHA_256, SHA_384];
         for (const suite of [
             "TLS_AES_128_GCM_SHA256",
             "TLS_AES_256_GCM_SHA384",

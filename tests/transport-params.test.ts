@@ -59,6 +59,13 @@ const fakePeer: UdpAddress = { address: "127.0.0.1", port: 443, family: 4 };
 function makeConnection(params: QuicTransportParameters = {}): QuicConnectionImpl {
     const manager = createStreamManager({
         sendFrame: () => {},
+        // No-op signal sink — the read loop is never started here, so no
+        // connection-level signal is ever emitted.
+        signals: {
+            onIncomingStream: () => {},
+            onConnectionClose: () => {},
+            onMaxData: () => {},
+        },
         localParameters: params,
         peerParameters: {},
     });
