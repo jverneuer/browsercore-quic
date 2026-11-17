@@ -99,16 +99,16 @@ DatagramTransport (injected UDP)
         │
         ▼
 ┌─────────────────────────────────────────────┐
-│ connection.ts:  read loop, packet I/O       │
-│   packet.ts  :  header parse/serialize       │
-│   frame.ts   :  frame parse/serialize        │
-│   varint.ts  :  QUIC varint (RFC 9000 §16)   │
+│ connection.ts : read loop, packet I/O       │
+│   packet.ts   : header parse/serialize      │
+│   frame.ts    : frame parse/serialize       │
+│   varint.ts   : QUIC varint (RFC 9000 §16)  │
 └──────────────┬──────────────────────────────┘
                │ dispatch
                ▼
 ┌─────────────────────────────────────────────┐
-│ stream.ts:  stream state machine,           │
-│             reassembly, flow control         │
+│ stream.ts     : stream state machine,       │
+│             reassembly, flow control        │
 └─────────────────────────────────────────────┘
 ```
 
