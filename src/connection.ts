@@ -26,13 +26,18 @@
  * manager and packed into packets; writes resolve once bytes are buffered.
  */
 
-import type { CryptoProvider, EventProvider } from "@browsercore/contracts";
+import type {
+    AeadAlgorithm,
+    ClientHelloConfig,
+    CryptoProvider,
+    EventProvider,
+    TlsHandshakeEngine,
+} from "@browsercore/contracts";
 import { createRandomSource, type RandomSource } from "@browsercore/transport";
 import {
     QuicFrameType,
     systemClock,
     type Clock,
-    type ClientHelloConfigLike,
     type ConnectionId,
     type QuicConnection,
     type QuicFrame,
@@ -53,7 +58,6 @@ import {
     unprotectPayload,
     type QuicAead,
 } from "./packet/packet-protection.js";
-import type { AeadAlgorithm, ClientHelloConfig } from "@browsercore/tls";
 import { readFrames, serializeFrame } from "./frame/frame.js";
 import {
     ConnectionClosedError,
@@ -134,6 +138,19 @@ export class QuicConnectionImpl implements QuicConnection {
     private readonly cryptoProvider: CryptoProvider;
     /** TLS ClientHello configuration for the handshake. */
     private readonly tlsProfile: ClientHelloConfig;
+    /**
+     * Canonical clock (from `@browsercore/contracts`, resolved like
+     * {@link QuicOptions.clock}). The handshake's certificate-time check reads
+     * this — never `Date.now()` directly — so cert validation stays
+     * deterministic under an injected fake clock.
+     */
+    private readonly clock: Clock;
+    /**
+     * Injected TLS handshake engine (contracts `TlsHandshakeEngine`) — the
+     * no-hard-wires seam. `undefined` means the deprecated dynamic
+     * @browsercore/tls default is used inside `runQuicHandshake`.
+     */
+    private readonly handshakeEngine: TlsHandshakeEngine | undefined;
     /**
      * Our transport parameters encoded for the wire. Produced at handshake
      * time so a TLS layer can carry them to the peer in the QUIC extension.
@@ -227,7 +244,12 @@ export class QuicConnectionImpl implements QuicConnection {
             },
         }) as CryptoProvider;
         // Resolve the TLS ClientHello configuration for the handshake.
-        this.tlsProfile = toTlsClientHelloConfig(options.tlsProfile, options.serverName);
+        this.tlsProfile = resolveTlsProfile(options.tlsProfile, options.serverName);
+        // Canonical clock for the handshake certificate-time check (and any
+        // future time-driven logic) — explicit option → platform.time.
+        this.clock = resolveClock(options);
+        // Injected handshake engine; undefined → deprecated dynamic tls default.
+        this.handshakeEngine = options.handshakeEngine;
         // Encode our transport parameters for the wire at construction. A real
         // TLS handshake would carry these to the peer in the QUIC extension;
         // here we surface them so the handshake layer can read them.
@@ -553,14 +575,17 @@ export class QuicConnectionImpl implements QuicConnection {
         const transport = adaptQuicStreamToTransport(stream, this.events);
 
         // Run the TLS handshake, capturing QUIC protection secrets at each phase.
+        // Cert time comes from the resolved clock (never Date.now directly) so
+        // certificate validation is deterministic under an injected fake clock.
         const result = await runQuicHandshake(
             transport,
-            { ...this.tlsProfile, serverName: this.tlsProfile.serverName },
+            this.tlsProfile,
             this.tlsProfile.serverName,
             this.dcid,
             [],
-            Math.floor(Date.now() / 1000),
+            Math.floor(this.clock.now() / 1000),
             this.cryptoProvider,
+            this.handshakeEngine,
         );
 
         this.handshakeResult = result;
@@ -1021,23 +1046,29 @@ function resolveLocalParameters(options: QuicOptions): QuicTransportParameters {
 // ---------------------------------------------------------------------------
 
 /**
- * Convert a {@link ClientHelloConfigLike} (the public QUIC option) to a
- * full @browsercore/tls `ClientHelloConfig` the handshake driver can consume.
+ * Resolve the ClientHello configuration for the handshake: the caller's
+ * canonical `ClientHelloConfig` (from `@browsercore/contracts` — the local
+ * `ClientHelloConfigLike` mirror was deleted in 0.2.7) or, when omitted, the
+ * modern TLS 1.3 default. An empty profile `serverName` falls back to the
+ * connection's `serverName` option.
  */
-function toTlsClientHelloConfig(like: ClientHelloConfigLike | undefined, serverName: string): ClientHelloConfig {
-    if (like === undefined) {
+function resolveTlsProfile(profile: ClientHelloConfig | undefined, serverName: string): ClientHelloConfig {
+    if (profile === undefined) {
         return { ...DEFAULT_TLS_PROFILE, serverName };
     }
-    return {
-        cipherSuites: like.cipherSuites as ClientHelloConfig["cipherSuites"],
-        extensionOrder: like.extensionOrder,
-        keyShareGroups: like.keyShareGroups as ClientHelloConfig["keyShareGroups"],
-        signatureAlgorithms: like.signatureAlgorithms as ClientHelloConfig["signatureAlgorithms"],
-        supportedVersions: like.supportedVersions as ClientHelloConfig["supportedVersions"],
-        serverName: like.serverName || serverName,
-        ...(like.alpnProtocols === undefined ? {} : { alpnProtocols: like.alpnProtocols }),
-        grease: like.grease,
-    };
+    if (profile.serverName === "") {
+        return { ...profile, serverName };
+    }
+    return profile;
+}
+
+/**
+ * Resolve the canonical clock: explicit `QuicOptions.clock` → `platform.time`
+ * (which IS a `Clock` — `Time` ≡ `Clock` since contracts 0.2.6) →
+ * {@link systemClock}.
+ */
+function resolveClock(options: QuicOptions): Clock {
+    return options.clock ?? options.platform?.time ?? systemClock;
 }
 
 /**
@@ -1050,16 +1081,16 @@ function toTlsClientHelloConfig(like: ClientHelloConfigLike | undefined, serverN
  *
  * The `tlsProfile` option selects the ClientHello configuration for the
  * handshake. Defaults to a modern TLS 1.3 profile (X25519 + secp256r1 key
- * shares, AES-256/128-GCM + ChaCha20-Poly1305). Set `skipHandshake: true` to
- * skip the TLS handshake and return an *unprotected* connection (the data plane
- * is fully functional and testable with a fake datagram transport, but it is
- * not wire-ready without a protection + handshake layer on top).
+ * shares, AES-256/128-GCM + ChaCha20-Poly1305). The `handshakeEngine` option
+ * injects the TLS engine (contracts `TlsHandshakeEngine`) — when omitted, the
+ * deprecated dynamic @browsercore/tls default is used. Set `skipHandshake:
+ * true` to skip the TLS handshake and return an *unprotected* connection (the
+ * data plane is fully functional and testable with a fake datagram transport,
+ * but it is not wire-ready without a protection + handshake layer on top).
  */
 export async function connectQuic(options: QuicOptions): Promise<QuicConnection> {
-    // Resolve the clock: explicit option → platform.time.clock → systemClock.
-    const clock: Clock = options.clock
-        ?? options.platform?.time?.clock
-        ?? systemClock;
+    // Resolve the clock: explicit option → platform.time (Time ≡ Clock) → systemClock.
+    const clock = resolveClock(options);
     const id = `quic_${clock.now().toString(36)}`;
 
     // The stream manager is constructed before the connection, but its frames

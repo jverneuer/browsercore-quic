@@ -19,7 +19,9 @@ exclusively over an injected `DatagramTransport` and `@browsercore/crypto`.
 ## What it does NOT know about
 
 - HTTP/3, QPACK, or any application protocol
-- TLS 1.3 / the QUIC handshake (key derivation lives in `@browsercore/crypto`)
+- TLS 1.3 handshake internals — the handshake runs through an injected
+  `TlsHandshakeEngine` (see below); quic never imports a protocol package
+  directly (key derivation lives in `@browsercore/crypto`)
 - UDP, DNS, or sockets
 - Browser fingerprints
 
@@ -85,6 +87,9 @@ await conn.close(0x00n, "graceful shutdown");
 | `encodeVarint` / `decodeVarint` | functions | QUIC varint encoding |
 | `parsePacketHeader` / `serializeShortHeader` / `serializeLongHeader` | functions | Packet header parse/serialize |
 | `decodePacketNumber` / `encodePacketNumber` | functions | Truncated packet-number coding |
+| `TlsHandshakeEngine` | interface | Contracts seam for the injected TLS engine (`@browsercore/contracts`) |
+| `ClientHelloConfig` | interface | Canonical ClientHello offer shape (`@browsercore/contracts`) |
+| `Clock` | interface | Canonical time source (`@browsercore/contracts`) |
 
 ## Architecture
 
@@ -121,23 +126,68 @@ composition root:
 | --- | --- |
 | `crypto` | `platform.crypto.provider` |
 | `events` | `platform.events` |
-| `clock` | `platform.time.clock` |
+| `clock` | `platform.time` (a `Clock` itself — `Time` ≡ `Clock` since contracts 0.2.6) |
 
 Individual fields always take precedence, so existing callers that pass
-`crypto`/`events` directly keep working unchanged. This is the migration path
+`crypto`/`events`/`clock` directly keep working unchanged. This is the migration path
 toward DI through Platform: callers move from passing individual service fields
 to threading a single Platform (assembled by `browsersmith`) through every
 protocol package. See `@browsercore/contracts` for the `Platform` interface.
 
+## TLS handshake engine injection
+
+Per the no-hard-wires invariant ("protocol packages must never import each
+other directly; all inter-package communication flows through Platform
+interfaces in `@browsercore/contracts`"), quic drives the TLS 1.3 handshake
+(RFC 9001 §4) through the contracts `TlsHandshakeEngine` interface —
+`runHandshake` / `generateKeyShares` / `cipherSuiteToAead` — never through a
+direct dependency on `@browsercore/tls`. Every type crossing the seam
+(`TlsHandshakeContext`, `ClientHelloConfig`, `ServerHello`, `TrafficSecrets`,
+`CipherSuite`, …) comes from `@browsercore/contracts` as well.
+
+**Composition-root wiring** (the pattern every `browsersmith` 0.0.19+ caller
+uses): the root imports the concrete engine once and injects it — quic only
+ever sees the interface.
+
+```ts
+import { connectQuic } from "@browsercore/quic";
+import { runHandshake, generateKeyShares, cipherSuiteToAead } from "@browsercore/tls";
+
+const conn = await connectQuic({
+    // …transport, peer, ids, crypto, events as usual…
+    handshakeEngine: { runHandshake, generateKeyShares, cipherSuiteToAead },
+});
+```
+
+**Deprecation note — the dynamic default.** When `handshakeEngine` is omitted,
+the handshake falls back to ONE dynamic `import("@browsercore/tls")` wrapping
+the package's three exported functions into the engine object
+(`loadDefaultHandshakeEngine` in `src/handshake/quic-handshake.ts`). That
+loader is the package's only remaining touchpoint on `@browsercore/tls` and
+exists purely so 0.2.x callers keep working; composition roots should inject
+explicitly. Engine internals are never reached.
+
+**Canonical Clock.** `QuicOptions.clock` and `platform.time` are the canonical
+`Clock` from `@browsercore/contracts` (`now` / `monotonic` / `sleep` /
+`setTimeout` / `clearTimeout`). The handshake's certificate-validity time is
+read from the resolved clock — `Math.floor(clock.now() / 1000)` — never from
+`Date.now()` directly, so cert-time behavior is deterministic under an
+injected fake clock.
+
+**Testing with a fake engine.** The sanctioned swap pattern (the same
+structural-implementation approach as http3's `fake-quic` compatibility test)
+is a local fake `TlsHandshakeEngine` that mutates the handshake context the
+way a completed handshake would — see
+`tests/handshake-engine-injection.test.ts`, which drives a full `connectQuic`
+handshake with the engine injected and asserts the deprecated dynamic
+`@browsercore/tls` fallback import is never taken.
+
 ## Known limitations
 
-- The TLS 1.3 handshake and packet protection (header protection + AEAD
-  payload encryption) are out of scope. `connectQuic()` returns a connection
-  that moves *unprotected* frames over the transport — the data plane is fully
-  functional and unit-tested, but it is not wire-ready without a protection +
-  handshake layer on top.
-- No congestion controller, no connection migration, no PATH_CHALLENGE /
-  PATH_RESPONSE beyond frame relay, and no liveness PING.
+- 0-RTT, KeyUpdate, key-phase-bit handling, and connection migration beyond
+  PATH_CHALLENGE / PATH_RESPONSE are out of scope, as is any congestion
+  controller or liveness PING. `skipHandshake: true` returns an *unprotected*
+  connection (data plane fully functional, not wire-ready).
 
 ## Contributing
 

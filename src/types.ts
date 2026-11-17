@@ -4,7 +4,14 @@ import type {
     DatagramCloseReason,
     RandomSource,
 } from "@browsercore/transport";
-import type { CryptoProvider, EventProvider, Platform } from "@browsercore/contracts";
+import type {
+    ClientHelloConfig,
+    Clock,
+    CryptoProvider,
+    EventProvider,
+    Platform,
+    TlsHandshakeEngine,
+} from "@browsercore/contracts";
 
 /**
  * Domain types for @browsercore/quic.
@@ -27,21 +34,41 @@ import type { CryptoProvider, EventProvider, Platform } from "@browsercore/contr
  */
 
 // ---------------------------------------------------------------------------
-// Clock abstraction (injected — makes time-dependent logic testable)
+// Clock (canonical — re-exported from @browsercore/contracts)
 // ---------------------------------------------------------------------------
 
 /**
- * A source of the current time. Injected so connection id generation and any
- * future time-driven logic can be tested deterministically. {@link systemClock}
- * is the production default; tests supply a fake.
+ * THE canonical `Clock` from `@browsercore/contracts`.
+ *
+ * The package-local `{ now() }` Clock was deleted in 0.2.7 (replaceability
+ * audit 2026-11-16, remediation item #6 for quic): `Time` ≡ `Clock` in the
+ * Platform contract, so `platform.time` binds this same interface and the
+ * explicit `QuicOptions.clock` seam uses it too. Injected so connection id
+ * generation and handshake certificate-time checks stay deterministic under
+ * test; {@link systemClock} is the production default.
  */
-export interface Clock {
-    /** Current time in milliseconds since the Unix epoch (same unit as Date.now()). */
-    now(): number;
-}
+export type { Clock, ClientHelloConfig, TlsHandshakeEngine } from "@browsercore/contracts";
 
-/** Production clock backed by the global Date. */
-export const systemClock: Clock = { now: () => Date.now() };
+/**
+ * Production default: the FULL canonical {@link Clock} surface implemented
+ * over the plain JS globals (`Date.now`, `performance.now`, `setTimeout`).
+ * quic itself only CALLS `now()` today (connection ids, handshake cert time);
+ * the remaining members are additive surface so the same object satisfies
+ * every `Platform.time` consumer. The globals carry no `node:*` import,
+ * keeping the default runtime-agnostic.
+ */
+export const systemClock: Clock = {
+    now: () => Date.now(),
+    // Monotonic — for elapsed/deadline math; never compare against now().
+    monotonic: () => performance.now(),
+    sleep: (ms) => new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    }),
+    setTimeout: (ms, fn) => setTimeout(fn, ms),
+    clearTimeout: (handle) => {
+        clearTimeout(handle as Parameters<typeof clearTimeout>[0]);
+    },
+};
 
 // Datagram transport types — imported from @browsercore/transport.
 // (Re-exported here so consumers can pull them from the quic package too.)
@@ -463,9 +490,12 @@ export interface QuicOptions {
     /** Our transport parameters to advertise. */
     readonly transportParameters?: QuicTransportParameters;
     /**
-     * Clock source for time-driven logic. Defaults to {@link systemClock}.
-     * Inject a fake in tests to make connection id generation deterministic.
-     * Ignored when {@link clock} is supplied by {@link platform}.
+     * Clock source for time-driven logic (connection ids, handshake
+     * certificate time) — the canonical `Clock` from `@browsercore/contracts`.
+     * Defaults to {@link systemClock}. Inject a fake in tests to make
+     * connection id generation and cert-time validation deterministic.
+     * Ignored when {@link clock} is supplied by {@link platform} (where
+     * `platform.time` IS a `Clock` — `Time` ≡ `Clock` since contracts 0.2.6).
      */
     readonly clock?: Clock;
     /**
@@ -483,11 +513,27 @@ export interface QuicOptions {
      */
     readonly skipHandshake?: boolean;
     /**
-     * TLS ClientHello configuration for the handshake. Defaults to a modern
-     * TLS 1.3 profile (X25519 + secp256r1 key shares, AES-256/128-GCM +
-     * ChaCha20-Poly1305).
+     * TLS ClientHello configuration for the handshake — the canonical
+     * `ClientHelloConfig` from `@browsercore/contracts` (the local
+     * `ClientHelloConfigLike` mirror was deleted in 0.2.7; the canonical type
+     * is typed string-literal unions instead of bare `string` lists). Defaults
+     * to a modern TLS 1.3 profile (X25519 + secp256r1 key shares,
+     * AES-256/128-GCM + ChaCha20-Poly1305).
      */
-    readonly tlsProfile?: ClientHelloConfigLike;
+    readonly tlsProfile?: ClientHelloConfig;
+    /**
+     * TLS 1.3 handshake engine (RFC 9001 §4) — the contracts
+     * `TlsHandshakeEngine`, injected per the no-hard-wires invariant: quic
+     * consumes the interface and never imports a protocol package directly.
+     * Composition roots (browsersmith 0.0.19 on) pass the @browsercore/tls
+     * backed engine here; tests pass a fake (http3's fake-quic pattern).
+     *
+     * DEPRECATED DEFAULT: when omitted, the handshake falls back to a single
+     * dynamic import of @browsercore/tls (see `loadDefaultHandshakeEngine` in
+     * `handshake/quic-handshake.ts`) — the only remaining tls touchpoint.
+     * The fallback keeps 0.2.x callers working; inject explicitly.
+     */
+    readonly handshakeEngine?: TlsHandshakeEngine;
     /**
      * Cryptographic provider for the handshake and packet protection
      * (RFC 9001). Injected so QUIC can be tested with a fake crypto provider
@@ -509,9 +555,10 @@ export interface QuicOptions {
      * The Platform composition root. When supplied, any service not passed as
      * an individual field is resolved from here: `crypto` from
      * `platform.crypto.provider`, `events` from `platform.events`, and
-     * `clock` from `platform.time.clock`. Individual fields always take
+     * `clock` from `platform.time` (which IS a `Clock` — `Time` ≡ `Clock`
+     * since contracts 0.2.6). Individual fields always take
      * precedence over the platform-supplied value, so existing callers that
-     * pass `crypto`/`events` directly keep working unchanged.
+     * pass `crypto`/`events`/`clock` directly keep working unchanged.
      *
      * This is the migration path toward DI through Platform: callers move
      * from passing individual service fields to threading a single Platform
@@ -531,35 +578,4 @@ export interface QuicTransportParameters {
     readonly initialMaxStreamsBidi?: bigint;
     readonly initialMaxStreamsUni?: bigint;
     readonly activeConnectionIdLimit?: number;
-}
-
-/**
- * A subset of @browsercore/tls's `ClientHelloConfig` that QUIC needs to drive
- * the handshake. We define a local interface (rather than importing the full
- * TLS type) so that the QUIC package's public options surface stays decoupled
- * from TLS internals — callers can pass a plain object literal.
- */
-export interface ClientHelloConfigLike {
-    /** Ordered list of cipher suites the client advertises (most-preferred first). */
-    readonly cipherSuites: readonly string[];
-    /** Extension types in the exact order they must appear in the ClientHello. */
-    readonly extensionOrder: readonly number[];
-    /** Named groups for key share, ordered by preference. */
-    readonly keyShareGroups: readonly string[];
-    /** Signature algorithms the client accepts in CertificateVerify. */
-    readonly signatureAlgorithms: readonly string[];
-    /** Protocol versions the client advertises via supported_versions. */
-    readonly supportedVersions: readonly ProtocolVersionLike[];
-    /** Server Name Indication hostname (SNI). */
-    readonly serverName: string;
-    /** ALPN protocols the client wishes to negotiate. */
-    readonly alpnProtocols?: readonly string[];
-    /** Whether to inject GREASE (RFC 8701) sentinel values. */
-    readonly grease: boolean;
-}
-
-/** A protocol version as advertised via supported_versions. */
-export interface ProtocolVersionLike {
-    readonly name: "TLS 1.2" | "TLS 1.3";
-    readonly wire: number;
 }
